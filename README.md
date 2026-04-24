@@ -1,4 +1,4 @@
-# JavaRAG: Ecossistema RAG Profissional com Spring Boot & LangChain4j
+# JavaRAG: Ecossistema RAG | Spring Boot & LangChain4j
 
 Este projeto é uma Implementação de Referência (POC) de um sistema de **RAG (Retrieval-Augmented Generation)** de alto desempenho, desenvolvido com Java 21, utilizando o poder do **Spring Boot**, **Spring AI** e **LangChain4j**.
 
