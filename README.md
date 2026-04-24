@@ -12,7 +12,8 @@
   <strong>Ecossistema RAG de Nível Corporativo — Spring Boot + LangChain4j + Spring AI</strong>
 </p>
 <p align="center">
-  <em>Busca Híbrida · Citações Inline · Re-ranking · Observabilidade · Multi-Provider</em>
+  <em>Busca Híbrida · Citações Inline · Re-ranking · Observabilidade · Streaming SSE · RAGAS</em>
+
 </p>
 
 ---
@@ -64,7 +65,9 @@ graph LR
 - ⚡ **Busca Híbrida com RRF** — Combina busca vetorial (Dense Retrieval) com lexical (Postgres Full Text Search) usando Reciprocal Rank Fusion
 - 🎯 **Cross-Encoder Reranking** — Reordenação precisa via Cohere antes do envio ao LLM
 - 📎 **Citações Verificáveis** — Respostas com referências inline `[n]` clicáveis, com visualização do documento-fonte e highlight do trecho citado
+- ⚡ **Streaming em Tempo Real (SSE)** — Respostas fluídas token-a-token para uma experiência de chat moderna e responsiva
 - 🔄 **Dual Framework** — Alterne entre LangChain4j e Spring AI em tempo real via toggle na UI
+
 
 ### Ingestão & Documentos
 - 📄 **Multi-Formato** — PDF, DOCX, TXT via Apache Tika
@@ -80,7 +83,9 @@ graph LR
 ### Observabilidade & Auditoria
 - 📊 **Dashboard de Métricas** — Tokens consumidos, custo estimado (USD), latência média, total de requisições
 - 📋 **Audit Log** — Registro completo de cada interação: query, resposta, modelo, tempo, tokens, custo
+- 🧪 **Avaliação RAGAS** — Dashboard de qualidade automatizado (LLM-as-a-Judge) medindo fidelidade, relevância e precisão do retrieval
 - 📈 **Prometheus/Micrometer** — Métricas exportadas via Spring Actuator para integração com Grafana
+
 
 ### Configuração & Segurança
 - 🔑 **Config Dinâmica** — Gerencie chaves de API e alterne provedores (OpenAI / Anthropic) em tempo real pela UI
@@ -130,11 +135,15 @@ graph LR
 src/main/java/com/jdeveloperweb/javarag/
 ├── api/                          # REST Controllers
 │   ├── AuditLogController        → GET /api/v1/audit
-│   ├── ChatController            → POST /api/v1/chat/query, GET /conversations
+│   ├── ChatController            → POST /api/v1/chat/query, GET /api/v1/chat/stream, GET /conversations
 │   ├── ConfigController          → GET/POST /api/v1/config
 │   ├── DocumentController        → CRUD /api/v1/documents
 │   ├── IngestionController       → POST /api/v1/ingestion/upload
+│   ├── RagasController           → GET/POST /api/v1/ragas (Evaluation Dashboard)
+│   ├── ObservabilityController   → GET /api/v1/observability/stats
 │   └── GlobalExceptionHandler    → Tratamento centralizado de erros
+
+
 ├── model/                        # JPA Entities
 │   ├── AuditLog                  → Registro de auditoria (query, resposta, tokens, custo)
 │   ├── ChatMessage               → Mensagem com campo citationsJson (TEXT)
@@ -146,14 +155,17 @@ src/main/java/com/jdeveloperweb/javarag/
 ├── service/                      # Lógica de Negócio
 │   ├── ChatService               → Orquestra prompt + LLM (LangChain4j)
 │   ├── SpringAiChatService       → Orquestra prompt + LLM (Spring AI)
+│   ├── StreamingChatService      → Implementação de streaming token-a-token via SSE
 │   ├── IngestionService          → Pipeline assíncrono: chunk → embed → index
 │   ├── RetrievalService          → Busca Híbrida (Vetorial + Lexical) + RRF
 │   ├── RerankingService          → Cross-Encoder via Cohere
+│   ├── RagasEvaluationService    → Pipeline de testes automatizados (LLM-as-a-Judge)
 │   ├── ModelService              → Factory dinâmica de modelos por provider
 │   ├── TikaService               → Extração de texto multi-formato
 │   ├── TokenCostService          → Cálculo de custo por token/modelo
 │   ├── MetricsService            → Contadores Micrometer (tokens, custo)
 │   └── ConversationService       → CRUD de conversas
+
 └── config/                       # Configurações Spring
 ```
 
@@ -163,7 +175,10 @@ web-ui/src/components/
 ├── IngestionView.tsx      → Upload, progresso em tempo real, inspeção de chunks
 ├── ConfigView.tsx         → Gerência de provedores (OpenAI, Anthropic, Cohere)
 ├── AuditLogView.tsx       → Visualização de logs de auditoria
+├── RagasView.tsx          → Métricas de qualidade (Faithfulness, Answer Relevance, etc)
 └── ObservabilityView.tsx  → Dashboard de métricas (tokens, custo, latência)
+
+
 ```
 
 ---
@@ -235,9 +250,18 @@ O projeto implementa uma estratégia de **TDD** com testes unitários para os se
 
 ---
 
-## ✨ Changelog Recente
+### ⚡ Respostas em Tempo Real (SSE)
+- Implementação de streaming de tokens via **Server-Sent Events**
+- Interface reativa com efeito de digitação suave e cursor animado
+- Citacões renderizadas dinamicamente conforme a resposta progride
+
+### 🧪 Framework de Avaliação RAGAS (Automated Testing)
+- Pipeline de "LLM-as-a-Judge" para avaliar a qualidade do RAG
+- Métricas: **Faithfulness**, **Answer Relevance**, **Context Precision** e **Context Recall**
+- Dashboard dedicado para acompanhamento da evolução da acurácia do sistema
 
 ### 🔒 Validação de Ativação de Provider
+
 - Provedores (Claude/OpenAI) agora **só podem ser ativados** se possuírem API Key configurada
 - Botões de provider no chat ficam desabilitados quando sem chave, prevenindo erros de runtime
 
@@ -257,6 +281,11 @@ O projeto implementa uma estratégia de **TDD** com testes unitários para os se
 ### 🔄 Correção de Ingestão Duplicada
 - Resolvido bug de disparo múltiplo no pipeline assíncrono que causava tarefas redundantes
 - Processamento agora executa uma única vez por documento
+
+### 🛠️ Correção de Deleção em Cascata
+- Implementado `CascadeType.REMOVE` e `orphanRemoval` nas relações de Ragas Evaluation
+- Correção de erro de constraint SQL ao tentar excluir documentos ou casos de teste
+
 
 ### 📊 Observabilidade & Audit Log
 - Dashboard de métricas com tokens, custo estimado, latência média e total de requisições
@@ -279,12 +308,12 @@ O projeto implementa uma estratégia de **TDD** com testes unitários para os se
 
 | Prioridade | Feature | Descrição |
 |:----------:|---------|-----------|
-| 🔴 | **Evaluation Framework** | Testes automatizados de qualidade de resposta (RAGAS) |
-| 🔴 | **Streaming Response** | Respostas em tempo real via SSE/WebSocket |
+| 🔴 | **Query Rewriting** | Reformulação automática de perguntas para melhor retrieval |
 | 🟡 | **LlamaParse / Unstructured** | Parsers avançados com leitura inteligente de tabelas e OCR |
-| 🟡 | **Grafana Dashboard** | Integração visual com métricas Prometheus |
+| 🟡 | **GraphRAG Integration** | Suporte a grafos de conhecimento para consultas complexas |
 | 🟢 | **Multi-tenancy Completo** | Isolamento de dados por tenant com JWT |
-| 🟢 | **Query Rewriting** | Reformulação automática de perguntas para melhor retrieval |
+| 🟢 | **Grafana Dashboard** | Integração visual com métricas Prometheus |
+
 
 ---
 
