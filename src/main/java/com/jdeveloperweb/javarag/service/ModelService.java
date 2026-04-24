@@ -3,8 +3,11 @@ package com.jdeveloperweb.javarag.service;
 import com.jdeveloperweb.javarag.model.ModelProviderConfig;
 import com.jdeveloperweb.javarag.repository.ModelProviderConfigRepository;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.StreamingChatLanguageModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import dev.langchain4j.model.anthropic.AnthropicStreamingChatModel;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
@@ -60,6 +63,25 @@ public class ModelService {
                 .apiKey(config.getApiKey())
                 .modelName("text-embedding-3-small")
                 .build();
+    }
+
+    public StreamingChatLanguageModel getStreamingChatModel(String provider) {
+        ModelProviderConfig config = repository.findByProviderName(provider.toUpperCase())
+                .orElseThrow(() -> new RuntimeException("Provider " + provider + " not configured in database."));
+
+        if ("OPENAI".equalsIgnoreCase(provider)) {
+            return OpenAiStreamingChatModel.builder()
+                    .apiKey(config.getApiKey())
+                    .modelName(Optional.ofNullable(config.getDefaultModelName()).orElse("gpt-4o"))
+                    .build();
+        } else if ("ANTHROPIC".equalsIgnoreCase(provider)) {
+            return AnthropicStreamingChatModel.builder()
+                    .apiKey(config.getApiKey())
+                    .modelName(Optional.ofNullable(config.getDefaultModelName()).orElse("claude-3-5-sonnet-latest"))
+                    .build();
+        }
+
+        throw new IllegalArgumentException("Unsupported streaming provider: " + provider);
     }
 
     public ChatModel getSpringAiChatModel(String provider) {

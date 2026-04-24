@@ -45,8 +45,13 @@ public class RetrievalService {
         // 2. Lexical Retrieval (Keywords)
         List<Chunk> lexicalChunks = chunkRepository.searchLexical(query, tenantId);
         List<TextSegment> lexicalResults = lexicalChunks.stream()
-                .map(chunk -> TextSegment.from(chunk.getText(), 
-                        dev.langchain4j.data.document.Metadata.from("title", chunk.getDocument().getTitle())))
+                .map(chunk -> {
+                    Map<String, Object> metadataMap = new HashMap<>();
+                    metadataMap.put("title", chunk.getDocument().getTitle());
+                    metadataMap.put("documentId", String.valueOf(chunk.getDocument().getId()));
+                    metadataMap.put("tenantId", tenantId);
+                    return TextSegment.from(chunk.getText(), dev.langchain4j.data.document.Metadata.from(metadataMap));
+                })
                 .collect(Collectors.toList());
         log.info("📖 [LEXICAL] Found {} lexical candidates", lexicalResults.size());
 

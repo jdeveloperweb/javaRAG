@@ -5,10 +5,11 @@ import IngestionView from './components/IngestionView';
 import ConfigView from './components/ConfigView';
 import AuditLogView from './components/AuditLogView';
 import ObservabilityView from './components/ObservabilityView';
-import { History, BarChart3 } from 'lucide-react';
+import RagasView from './components/RagasView';
+import { History, BarChart3, CheckCircle2 } from 'lucide-react';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'ingestion' | 'config' | 'audit' | 'observability'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'ingestion' | 'config' | 'audit' | 'observability' | 'ragas'>('chat');
 
   return (
     <div className="flex h-screen w-full bg-white text-slate-900 font-medium">
@@ -65,6 +66,16 @@ function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('ragas')}
+            className={`w-full flex items-center gap-3 px-4 py-3 transition-all ${
+              activeTab === 'ragas' ? 'flat-nav-active' : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <CheckCircle2 className="w-5 h-5" />
+            <span className="font-semibold hidden lg:block text-sm">RAGAS Tests</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('config')}
             className={`w-full flex items-center gap-3 px-4 py-3 transition-all ${
               activeTab === 'config' ? 'flat-nav-active' : 'text-slate-400 hover:text-white hover:bg-white/5'
@@ -104,6 +115,7 @@ function App() {
             {activeTab === 'config' && <ConfigView />}
             {activeTab === 'audit' && <AuditLogView />}
             {activeTab === 'observability' && <ObservabilityView />}
+            {activeTab === 'ragas' && <RagasView />}
           </div>
         </div>
       </main>

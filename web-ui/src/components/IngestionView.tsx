@@ -72,7 +72,7 @@ const IngestionView = () => {
     try {
       // Optimistic update
       setDocuments(docs => docs.map(d => 
-        d.id === id ? { ...d, status: 'EXTRACTING', progress: 5 } : d
+        d.id === id ? { ...d, status: 'CHUNKING', progress: 5 } : d
       ));
       await axios.post(`/api/v1/ingestion/process/${id}`);
       fetchDocuments();
@@ -247,7 +247,7 @@ const IngestionView = () => {
                         className="px-4 py-1.5 bg-flat-blue text-white rounded-md text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 transition-all active:scale-95 flex items-center gap-2 shadow-sm"
                       >
                         <Cpu className="w-3 h-3" />
-                        Incorporar
+                        Realizar Ingestão
                       </button>
                     )}
                     <StatusBadge status={doc.status} />

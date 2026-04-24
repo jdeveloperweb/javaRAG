@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Sparkles, Loader2, PlusCircle, Trash2, Clock, MessageSquare, Menu, X } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Bot, User, Sparkles, Loader2, PlusCircle, Trash2, Clock, MessageSquare, Menu, X, StopCircle } from 'lucide-react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
@@ -19,6 +19,7 @@ interface Message {
   modelUsed?: string;
   timestamp: Date;
   citations?: Citation[];
+  isStreaming?: boolean;
 }
 
 interface Conversation {
@@ -31,9 +32,14 @@ const ChatView = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [provider, setProvider] = useState<'OPENAI' | 'ANTHROPIC'>('OPENAI');
   const [useSpringAi, setUseSpringAi] = useState(true);
   const [configuredProviders, setConfiguredProviders] = useState<Set<string>>(new Set());
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const tokenQueueRef = useRef<string[]>([]);
+  const processingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isDoneRef = useRef<boolean>(false);
   
   // History states
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -204,6 +210,55 @@ const ChatView = () => {
     scrollToBottom();
   }, [messages]);
 
+  const handleStopStreaming = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (processingIntervalRef.current) {
+      clearInterval(processingIntervalRef.current);
+      processingIntervalRef.current = null;
+    }
+    tokenQueueRef.current = [];
+    isDoneRef.current = false;
+    setIsStreaming(false);
+    setIsLoading(false);
+    setMessages(prev => prev.map((m, i) =>
+      i === prev.length - 1 && m.isStreaming ? { ...m, isStreaming: false } : m
+    ));
+  }, []);
+
+  const startTokenProcessor = (aiMessageId: string) => {
+    if (processingIntervalRef.current) return;
+
+    processingIntervalRef.current = setInterval(() => {
+      if (tokenQueueRef.current.length > 0) {
+        const nextToken = tokenQueueRef.current.shift();
+        if (nextToken) {
+          setMessages(prev => prev.map(m =>
+            m.id === aiMessageId ? { ...m, content: m.content + nextToken } : m
+          ));
+        }
+      } else if (isDoneRef.current) {
+        // Queue is empty and backend is done
+        stopTokenProcessor(aiMessageId);
+      }
+    }, 35); // 35ms per token for a natural "word by word" feel
+  };
+
+  const stopTokenProcessor = (aiMessageId: string) => {
+    if (processingIntervalRef.current) {
+      clearInterval(processingIntervalRef.current);
+      processingIntervalRef.current = null;
+    }
+    setIsStreaming(false);
+    setIsLoading(false);
+    isDoneRef.current = false;
+    setMessages(prev => prev.map(m =>
+      m.id === aiMessageId ? { ...m, isStreaming: false } : m
+    ));
+  };
+
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -214,38 +269,111 @@ const ChatView = () => {
       timestamp: new Date(),
     };
 
+    const aiMessageId = (Date.now() + 1).toString();
+    const savedInput = input;
+
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
+    setIsStreaming(true);
+    tokenQueueRef.current = [];
+    isDoneRef.current = false;
+
+    // Create empty assistant message for streaming
+    setMessages(prev => [...prev, {
+      id: aiMessageId,
+      role: 'assistant' as const,
+      content: '',
+      timestamp: new Date(),
+      isStreaming: true,
+    }]);
+
+    startTokenProcessor(aiMessageId);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
-      const response = await axios.post('/api/v1/chat/query', {
-        message: input,
-        provider,
-        tenantId: 'default',
-        useSpringAi,
-        conversationId: currentConversationId
+      const response = await fetch('/api/v1/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: savedInput,
+          provider,
+          tenantId: 'default',
+          useSpringAi,
+          conversationId: currentConversationId,
+        }),
+        signal: controller.signal,
       });
 
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: response.data.answer,
-        modelUsed: response.data.modelUsed,
-        timestamp: new Date(),
-        citations: response.data.citations,
-      };
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-      setMessages(prev => [...prev, aiMessage]);
-      
-      if (!currentConversationId) {
-        setCurrentConversationId(response.data.conversationId);
-        fetchConversations();
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine) continue;
+
+          if (line.startsWith('event:')) {
+            currentEvent = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            const data = line.slice(5);
+            
+            if (currentEvent === 'token') {
+              tokenQueueRef.current.push(data);
+            } else if (currentEvent === 'citations') {
+              try {
+                const citations: Citation[] = JSON.parse(data.trim());
+                setMessages(prev => prev.map(m =>
+                  m.id === aiMessageId ? { ...m, citations } : m
+                ));
+              } catch (e) { console.error('Failed to parse citations', e); }
+            } else if (currentEvent === 'done') {
+              try {
+                const meta = JSON.parse(data.trim());
+                setMessages(prev => prev.map(m =>
+                  m.id === aiMessageId ? { ...m, modelUsed: meta.modelUsed } : m
+                ));
+                if (!currentConversationId && meta.conversationId) {
+                  setCurrentConversationId(meta.conversationId);
+                  fetchConversations();
+                }
+                isDoneRef.current = true;
+              } catch (e) { console.error('Failed to parse done event', e); }
+            } else if (currentEvent === 'error') {
+              try {
+                const err = JSON.parse(data.trim());
+                tokenQueueRef.current.push('\n\n⚠️ Erro: ' + err.message);
+                isDoneRef.current = true;
+              } catch (e) { console.error('Failed to parse error', e); }
+            }
+          }
+        }
       }
-    } catch (error) {
-      console.error('Error sending message:', error);
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('Stream cancelled by user');
+      } else {
+        console.error('Error streaming:', error);
+        tokenQueueRef.current.push('⚠️ Erro ao conectar com o servidor.');
+        isDoneRef.current = true;
+      }
     } finally {
-      setIsLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -418,12 +546,14 @@ const ChatView = () => {
                     </div>
                   )}
                   
-                  <div className={`max-w-[80%] group relative ${m.role === 'user' ? 'order-first' : ''}`}>
-                    <div className={`p-4 px-5 rounded-2xl shadow-sm ${
-                      m.role === 'user' 
-                        ? 'bg-primary-600 text-white rounded-tr-none' 
-                        : 'bg-white text-slate-800 rounded-tl-none border border-slate-100 shadow-md shadow-slate-200/50'
-                    }`}>
+                  <div className={`max-w-[85%] group relative ${m.role === 'user' ? 'order-first' : ''}`}>
+                    <div 
+                      className={`p-4 px-5 rounded-2xl shadow-sm ${
+                        m.role === 'user' 
+                          ? 'bg-primary-600 text-white rounded-tr-none' 
+                          : 'bg-white text-slate-800 rounded-tl-none border border-slate-100 shadow-sm'
+                      }`}
+                    >
                       <div className={`prose prose-slate max-w-none text-[15px] leading-relaxed ${m.role === 'user' ? 'prose-invert prose-p:text-white prose-headings:text-white prose-strong:text-white prose-a:text-blue-200' : ''}`}>
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
@@ -449,6 +579,9 @@ const ChatView = () => {
                         >
                           {m.content}
                         </ReactMarkdown>
+                        {m.isStreaming && (
+                          <span className="inline-block w-2 h-5 bg-primary-500 ml-1 translate-y-1 animate-pulse" />
+                        )}
                       </div>
 
                       {m.citations && m.citations.length > 0 && (() => {
@@ -460,20 +593,18 @@ const ChatView = () => {
                               .filter(c => cited.has(c.originalIndex))
                           : m.citations.map((c, i) => ({ ...c, originalIndex: i + 1 }));
 
-                        if (citationsToShow.length === 0) return null;
-
                         return (
                           <div className="mt-4 pt-4 border-t border-slate-100">
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                              <Sparkles className="w-3 h-3" />
+                              <Sparkles className="w-3 h-3 text-amber-500" />
                               Fontes Utilizadas
                             </p>
                             <div className="flex flex-col gap-2">
                               {citationsToShow.map((c) => (
                                 <div 
-                                  key={c.originalIndex} 
+                                  key={c.originalIndex}
                                   onClick={() => handleCitationClick(c)}
-                                  className="bg-slate-50 border border-slate-100 rounded-lg p-2.5 text-xs cursor-pointer hover:bg-white hover:border-primary-200 hover:shadow-sm hover:-translate-y-0.5 transition-all group/cit"
+                                  className="bg-slate-50 border border-slate-100 rounded-lg p-2.5 text-xs cursor-pointer hover:bg-white hover:border-primary-200 transition-all group/cit"
                                 >
                                   <div className="flex items-center justify-between mb-1">
                                     <span className="font-bold text-primary-600 block">[{c.originalIndex}] {c.source}</span>
@@ -502,7 +633,7 @@ const ChatView = () => {
                 </motion.div>
               ))}
               
-              {isLoading && (
+              {isLoading && !isStreaming && (
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -550,18 +681,28 @@ const ChatView = () => {
                 placeholder="Digite sua dúvida sobre os documentos..."
                 className="flex-1 bg-transparent px-2 py-3 focus:outline-none text-slate-800 font-medium placeholder:text-slate-400"
               />
-              <button
-                onClick={handleSend}
-                disabled={isLoading || !input.trim()}
-                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all ${
-                  isLoading || !input.trim() 
-                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
-                    : 'bg-primary-600 text-white shadow-lg shadow-primary-200 hover:shadow-primary-300 hover:-translate-y-0.5 active:translate-y-0'
-                }`}
-              >
-                {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-                <span className="hidden sm:inline">Enviar</span>
-              </button>
+              {isStreaming ? (
+                <button
+                  onClick={handleStopStreaming}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all bg-red-500 text-white shadow-lg shadow-red-200 hover:bg-red-600 hover:-translate-y-0.5 active:translate-y-0"
+                >
+                  <StopCircle className="w-5 h-5" />
+                  <span className="hidden sm:inline">Parar</span>
+                </button>
+              ) : (
+                <button
+                  onClick={handleSend}
+                  disabled={isLoading || !input.trim()}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all ${
+                    isLoading || !input.trim() 
+                      ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                      : 'bg-primary-600 text-white shadow-lg shadow-primary-200 hover:shadow-primary-300 hover:-translate-y-0.5 active:translate-y-0'
+                  }`}
+                >
+                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                  <span className="hidden sm:inline">Enviar</span>
+                </button>
+              )}
             </div>
           </motion.div>
         </div>

@@ -34,6 +34,7 @@ public class IngestionController {
 
     @PostMapping("/process/{id}")
     public ResponseEntity<Void> processDocument(@PathVariable Long id) {
+        ingestionService.markAsProcessing(id);
         ingestionService.processIngestionAsync(id);
         return ResponseEntity.ok().build();
     }

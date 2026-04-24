@@ -63,3 +63,8 @@
 ::selection {
   @apply bg-primary-100 text-primary-900;
 }
+
+@keyframes blink {
+  from, to { opacity: 1; }
+  50% { opacity: 0; }
+}

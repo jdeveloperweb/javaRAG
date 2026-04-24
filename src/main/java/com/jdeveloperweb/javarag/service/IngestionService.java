@@ -43,6 +43,16 @@ public class IngestionService {
         return documentRepository.save(document).getId();
     }
 
+    @Transactional
+    public void markAsProcessing(Long documentId) {
+        Document document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new RuntimeException("Document not found: " + documentId));
+        log.info("[INGESTION] Marking document {} as PROCESSING (CHUNKING stage)", documentId);
+        document.setStatus(Document.DocumentStatus.CHUNKING);
+        document.setProgress(5); // Initial progress to show the bar immediately
+        documentRepository.save(document);
+    }
+
     @org.springframework.scheduling.annotation.Async
     public void processIngestionAsync(Long documentId) {
         Document document = documentRepository.findById(documentId)
@@ -58,9 +68,9 @@ public class IngestionService {
             
             // 1. Chunking
             log.info("[STAGE] Chunking text...");
-            document.setStatus(Document.DocumentStatus.CHUNKING);
-            document.setProgress(20);
-            documentRepository.save(document);
+            // document.setStatus(Document.DocumentStatus.CHUNKING); // Already set synchronously
+            // document.setProgress(20);
+            // documentRepository.save(document);
             
             DocumentSplitter splitter = DocumentSplitters.recursive(1000, 200);
             dev.langchain4j.data.document.Document lcDocument = dev.langchain4j.data.document.Document.from(text);
@@ -129,9 +139,8 @@ public class IngestionService {
                 .toList();
                 
         if (!embeddingIds.isEmpty()) {
-            String idsList = embeddingIds.stream().map(eid -> "'" + eid + "'").collect(java.util.stream.Collectors.joining(","));
             try {
-                entityManager.createNativeQuery("DELETE FROM test_embeddings WHERE id::text IN (" + idsList + ")").executeUpdate();
+                embeddingStore.removeAll(embeddingIds);
             } catch (Exception e) {
                 log.error("Failed to delete embeddings for document {}", id, e);
             }
