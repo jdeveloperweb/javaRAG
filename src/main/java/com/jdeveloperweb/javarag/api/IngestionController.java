@@ -17,30 +17,36 @@ public class IngestionController {
     private final TikaService tikaService;
 
     @PostMapping("/upload")
-    public ResponseEntity<String> uploadFile(
+    public ResponseEntity<Long> uploadFile(
             @RequestParam("file") MultipartFile file,
             @RequestParam("tenantId") String tenantId,
             @RequestParam("collectionId") String collectionId) {
         
         String text = tikaService.extractText(file);
-        Long docId = ingestionService.ingestText(
+        Long docId = ingestionService.createDocument(
                 file.getOriginalFilename(),
                 text,
                 tenantId,
                 collectionId
         );
-        return ResponseEntity.ok("File uploaded and ingested successfully with ID: " + docId);
+        return ResponseEntity.ok(docId);
+    }
+
+    @PostMapping("/process/{id}")
+    public ResponseEntity<Void> processDocument(@PathVariable Long id) {
+        ingestionService.processIngestionAsync(id);
+        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/text")
-    public ResponseEntity<String> ingestText(@RequestBody IngestionRequest request) {
-        Long docId = ingestionService.ingestText(
+    public ResponseEntity<Long> ingestText(@RequestBody IngestionRequest request) {
+        Long docId = ingestionService.createDocument(
                 request.getTitle(),
                 request.getText(),
                 request.getTenantId(),
                 request.getCollectionId()
         );
-        return ResponseEntity.ok("Document ingested successfully with ID: " + docId);
+        return ResponseEntity.ok(docId);
     }
 
     @Data

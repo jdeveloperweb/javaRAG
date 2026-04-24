@@ -50,12 +50,30 @@ public class RetrievalService {
                 .collect(Collectors.toList());
         log.info("📖 [LEXICAL] Found {} lexical candidates", lexicalResults.size());
 
-        // 3. Simple Fusion (Unique results, prioritizing dense for this POC)
-        Map<String, TextSegment> fused = new LinkedHashMap<>();
-        denseResults.forEach(s -> fused.put(s.text(), s));
-        lexicalResults.forEach(s -> fused.putIfAbsent(s.text(), s));
+        // 3. Reciprocal Rank Fusion (RRF)
+        Map<String, Double> rrfScores = new HashMap<>();
+        Map<String, TextSegment> segmentMap = new HashMap<>();
+        int k = 60;
 
-        List<TextSegment> candidates = new ArrayList<>(fused.values());
+        for (int i = 0; i < denseResults.size(); i++) {
+            TextSegment segment = denseResults.get(i);
+            String text = segment.text();
+            segmentMap.put(text, segment);
+            rrfScores.put(text, rrfScores.getOrDefault(text, 0.0) + (1.0 / (k + i + 1)));
+        }
+
+        for (int i = 0; i < lexicalResults.size(); i++) {
+            TextSegment segment = lexicalResults.get(i);
+            String text = segment.text();
+            segmentMap.putIfAbsent(text, segment);
+            rrfScores.put(text, rrfScores.getOrDefault(text, 0.0) + (1.0 / (k + i + 1)));
+        }
+
+        List<TextSegment> candidates = rrfScores.entrySet().stream()
+                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+                .map(entry -> segmentMap.get(entry.getKey()))
+                .collect(Collectors.toList());
+        log.info("🔀 [FUSION] Applied RRF to {} unique candidates", candidates.size());
 
         // 4. Reranking
         return rerankingService.rerank(query, candidates, limit);

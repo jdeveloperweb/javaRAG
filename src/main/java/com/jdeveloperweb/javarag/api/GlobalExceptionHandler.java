@@ -22,7 +22,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<String> handleGeneralException(Exception e) {
-        log.error("💥 [FATAL] Unexpected error: {}", e.getMessage(), e);
+        log.error("💥 [FATAL] Unexpected error: {} (Type: {})", e.getMessage(), e.getClass().getName(), e);
         return ResponseEntity.internalServerError().body("Fatal error: " + e.getMessage());
     }
 }

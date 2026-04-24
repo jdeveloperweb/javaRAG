@@ -31,6 +31,11 @@ public class Document {
     private String collectionId;
 
     private String sourceUri;
+    
+    @Column(columnDefinition = "TEXT")
+    private String extractedText;
+
+    private Integer progress;
 
     @Enumerated(EnumType.STRING)
     private DocumentStatus status;

@@ -13,19 +13,20 @@ RAG é uma técnica que resolve dois grandes problemas dos Modelos de Linguagem 
 ### O Pipeline deste Projeto:
 1.  **Ingestão**: Documentos (PDF, DOCX, TXT) são lidos via **Apache Tika**, divididos em pedaços (**Chunks**), convertidos em vetores matemáticos (**Embeddings**) e armazenados em um banco vetorial.
 2.  **Recuperação (Retrieval)**: Quando o usuário faz uma pergunta, o sistema realiza uma **Busca Híbrida** (Vetorial + Lexical) para encontrar os trechos mais relevantes.
-3.  **Re-ranqueamento (Reranking)**: Os trechos encontrados são reavaliados por um modelo especializado da **Cohere** para garantir que apenas o contexto mais pertinente seja enviado ao LLM.
-4.  **Geração**: O LLM (OpenAI ou Anthropic) recebe a pergunta + o contexto curado e gera uma resposta baseada estritamente nos fatos fornecidos, com citações inline `[n]`.
+3.  **Re-ranqueamento (Reranking)**: (Opcional/Customizável) Os trechos encontrados podem ser reavaliados para garantir que apenas o contexto mais pertinente seja enviado ao LLM.
+4.  **Geração**: O LLM recebe a pergunta + o contexto curado e gera uma resposta baseada estritamente nos fatos fornecidos, com citações inline `[n]`.
 
 ---
 
 ## 🚀 Funcionalidades Principais
 
-*   **Busca Híbrida**: Combina a semântica dos vetores (Dense Retrieval) com a precisão das palavras-chave (Lexical Search via SQL `LIKE` e índices).
-*   **Reranking com Cohere**: Utiliza modelos de scoring de última geração para filtrar ruído e melhorar a qualidade da resposta final.
+*   **Busca Híbrida Avançada (RRF)**: Combina a semântica dos vetores (Dense Retrieval) com a precisão das palavras-chave (Lexical Search via Postgres Full Text Search) e as unifica utilizando o algoritmo matemático **Reciprocal Rank Fusion**.
+*   **Cross-Encoder Reranking**: Reordenação fina e precisa dos contextos utilizando a API do **Cohere**.
 *   **Extração Inteligente**: Suporte a múltiplos formatos de arquivos através do Apache Tika.
-*   **Gestão de Histórico**: Conversas persistidas no PostgreSQL com suporte a múltiplas sessões por usuário.
-*   **Audit Log**: Rastreabilidade total de cada pergunta, resposta, modelo utilizado e tempo de latência.
-*   **Configuração Dinâmica**: Interface para gerenciar chaves de API e alternar entre provedores (OpenAI, Anthropic, Cohere) em tempo real.
+*   **Gestão de Histórico**: Conversas persistidas no PostgreSQL com suporte a múltiplas sessões por usuário e funcionalidade de limpar histórico.
+*   **Audit Log & Observabilidade**: Rastreabilidade total de cada pergunta, resposta, modelo utilizado, tempo de latência e custo estimado (tokens). Visualização integrada no Frontend.
+*   **Ingestão Assíncrona**: Processamento de documentos em background com feedback visual de progresso (Extração, Chunking, Embedding, Indexação) em tempo real na UI.
+*   **Configuração Dinâmica**: Interface para gerenciar chaves de API e alternar entre provedores em tempo real.
 
 ---
 
@@ -34,7 +35,7 @@ RAG é uma técnica que resolve dois grandes problemas dos Modelos de Linguagem 
 ### Por que LangChain4j + Spring AI?
 Utilizamos uma abordagem híbrida de frameworks para extrair o melhor de cada um:
 *   **Spring AI**: Utilizado pela sua excelente integração com o ecossistema Spring Boot, facilitando a configuração de bancos vetoriais (Starter do PgVector) e integração nativa com o ciclo de vida da aplicação.
-*   **LangChain4j**: Utilizado pela sua maturidade em pipelines de RAG avançados, oferecendo ferramentas superiores para splitters de documentos, integração com Cohere Rerank e uma API mais fluida para orquestração de memória e prompts.
+*   **LangChain4j**: Utilizado pela sua maturidade em pipelines de RAG avançados, oferecendo ferramentas superiores para splitters de documentos e uma API mais fluida para orquestração de memória e prompts.
 
 ### Stack Tecnológica
 *   **Backend**: Java 21, Spring Boot 3.2.x.
@@ -47,9 +48,8 @@ Utilizamos uma abordagem híbrida de frameworks para extrair o melhor de cada um
 
 ## 📂 Estrutura de Serviços (O que cada um faz?)
 
-*   **`IngestionService`**: Orquestra o pipeline de entrada. Faz o chunking (Recursive Split: 500 tokens / 100 overlap), gera os embeddings via OpenAI e salva simultaneamente no PostgreSQL e no PgVector.
+*   **`IngestionService`**: Orquestra o pipeline de entrada de forma assíncrona. Faz o chunking consciente de contexto (Recursive Split: 1000 caracteres / 200 overlap preservando parágrafos e frases), gera os embeddings e salva simultaneamente no PostgreSQL e no PgVector, reportando progresso para a UI.
 *   **`RetrievalService`**: Responsável pela "busca da verdade". Implementa a lógica de buscar candidatos no banco vetorial e no banco relacional, fundindo os resultados.
-*   **`RerankingService`**: O cérebro da relevância. Envia os candidatos para a API da Cohere para obter um score de relevância real em relação à pergunta.
 *   **`ChatService`**: O maestro do chat. Gerencia o prompt de sistema (instruções de comportamento), o prompt do usuário, chama o LLM e salva o histórico da conversa.
 *   **`TikaService`**: Camada de extração de texto agnóstica de formato.
 *   **`ModelService`**: Factory que instancia os modelos corretos baseados nas configurações de API salvas no banco.
@@ -61,7 +61,7 @@ Utilizamos uma abordagem híbrida de frameworks para extrair o melhor de cada um
 ### Pré-requisitos
 *   Java 21 instalado.
 *   Docker e Docker Compose.
-*   Chaves de API (OpenAI, Anthropic ou Cohere).
+*   Chaves de API configuráveis no sistema.
 
 ### Passo a Passo
 1.  **Subir o Banco de Dados**:
@@ -92,10 +92,25 @@ Os prompts estão centralizados no `ChatService.java`. Utilizamos um **System Pr
 
 ---
 
+## ✨ Recentes Atualizações / Changelog
+*   **"Super Poderes" RAG Ativados**:
+    *   Implementado Chunking Semântico com limites de contexto maiores (1000 chars) priorizando quebra inteligente por parágrafos e pontuação.
+    *   Algoritmo **RRF (Reciprocal Rank Fusion)** implementado do zero para unificar de forma justa a busca Lexical (Full Text Search do Postgres) com a Busca Vetorial (Dense Retrieval).
+    *   Reativação do **Cross-Encoder (Cohere)** para reordenamento matemático dos candidatos antes de enviar ao LLM.
+    *   Envio estruturado de **Citações e Fontes** (Citations) via API para renderização rica e clicável na interface do usuário (React UI).
+*   **Ingestão Assíncrona de Documentos**: O backend agora processa arquivos em background, sem bloquear a UI. Adicionada barra de progresso em tempo real mostrando os estágios (Extraindo, Chunking, Embedding, Indexando).
+*   **Observabilidade e Audit Log no Frontend**: Criação de visualização para logs de auditoria na UI, incluindo rastreamento de uso de tokens e custo estimado de IA.
+*   **Gestão Completa de Histórico de Chat**: Possibilidade de alternar entre conversas anteriores, deletar conversas específicas ou limpar todo o histórico de uma vez.
+*   **Visualização de Chunks e Vector Embeddings**: O sistema permite a inspeção direta de trechos de documentos (chunks) e seus respectivos embeddings no frontend para facilitar o debug de recuperação (Retrieval).
+*   **Refatoração de Configurações**: Remoção de dependências legadas (ex: Cohere), correção de problemas de compilação, e tratamento de erros de Foreign Key no banco para deleção de documentos de forma segura.
+*   **Tratamento de Exceções**: Correção de StackOverflow (Recursão infinita do Hibernate na leitura de JSON) e otimização geral de resiliência do sistema e visual do frontend (Skeleton Loading, Modais, Notificações).
+
+---
+
 ## 🚧 Roadmap e Melhorias Futuras
 
 Embora funcional, este projeto é uma fundação. Próximos passos incluem:
-*   **Semantic Chunking**: Divisão de documentos baseada em variação de significado, não apenas tamanho de texto.
+*   **Unstructured.io / LlamaParse**: Implementar parsers avançados com leitura inteligente de tabelas e visão estrutural (OCR e extração semântica profunda).
 *   **Observabilidade Avançada**: Integração com LangSmith ou Prometheus para métricas de custo e performance.
 *   **OCR Integration**: Suporte para leitura de documentos digitalizados (imagens).
 *   **Evaluation Framework**: Implementação de testes automatizados de qualidade de resposta (RAGAS).

@@ -33,6 +33,11 @@ public class AuditLog {
     private String modelUsed;
 
     private Long responseTimeMillis;
+    
+    private Integer promptTokens;
+    private Integer completionTokens;
+    private Integer totalTokens;
+    private Double estimatedCost;
 
     private LocalDateTime createdAt;
 

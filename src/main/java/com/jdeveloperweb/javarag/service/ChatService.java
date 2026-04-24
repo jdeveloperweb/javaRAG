@@ -23,6 +23,8 @@ public class ChatService {
     private final AuditLogRepository auditLogRepository;
     private final ConversationService conversationService;
     private final com.jdeveloperweb.javarag.repository.ChatMessageRepository chatMessageRepository;
+    private final TokenCostService tokenCostService;
+    private final MetricsService metricsService;
 
     public ChatResponse chat(String question, String provider, String tenantId, Long conversationId) {
         long startTime = System.currentTimeMillis();
@@ -86,11 +88,13 @@ public class ChatService {
 
         // 5. Call LLM
         log.info("🤖 [LLM] Sending prompt to {}...", provider);
-        AiMessage aiMessage = chatModel.generate(
+        dev.langchain4j.model.output.Response<AiMessage> response = chatModel.generate(
                 new SystemMessage(systemPrompt),
                 new UserMessage(userPrompt)
-        ).content();
-        log.info("✨ [LLM] Response received");
+        );
+        AiMessage aiMessage = response.content();
+        dev.langchain4j.model.output.TokenUsage usage = response.tokenUsage();
+        log.info("✨ [LLM] Response received. Tokens: {}", usage);
 
         // 6. Persistence
         com.jdeveloperweb.javarag.model.Conversation conversation;
@@ -110,21 +114,50 @@ public class ChatService {
                 .role("USER")
                 .build());
 
-        // Save AI Message
+        // Build citations
+        List<Citation> citations = segments.stream()
+                .map(segment -> Citation.builder()
+                        .source(segment.metadata().getString("title"))
+                        .text(segment.text())
+                        .documentId(Long.parseLong(segment.metadata().getString("documentId")))
+                        .build())
+                .collect(java.util.stream.Collectors.toList());
+
+        // Serialize citations to JSON
+        String citationsJson = null;
+        try {
+            citationsJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(citations);
+        } catch (Exception e) {
+            log.error("Failed to serialize citations", e);
+        }
+
+        // Save AI Message with citations
         chatMessageRepository.save(com.jdeveloperweb.javarag.model.ChatMessage.builder()
                 .conversation(conversation)
                 .content(aiMessage.text())
                 .role("ASSISTANT")
+                .citationsJson(citationsJson)
                 .build());
 
         long duration = System.currentTimeMillis() - startTime;
+        
+        int pTokens = (usage != null) ? usage.inputTokenCount() : 0;
+        int cTokens = (usage != null) ? usage.outputTokenCount() : 0;
+        double cost = tokenCostService.calculateCost(provider, pTokens, cTokens);
+
         auditLogRepository.save(AuditLog.builder()
                 .tenantId(tenantId)
                 .userQuery(question)
                 .aiResponse(aiMessage.text())
                 .modelUsed(provider)
                 .responseTimeMillis(duration)
+                .promptTokens(pTokens)
+                .completionTokens(cTokens)
+                .totalTokens(pTokens + cTokens)
+                .estimatedCost(cost)
                 .build());
+        
+        metricsService.recordUsage(provider, pTokens, cTokens, cost);
         
         log.info("📊 [STATS] Chat completed in {}ms", duration);
 
@@ -132,7 +165,16 @@ public class ChatService {
                 .answer(aiMessage.text())
                 .modelUsed(provider)
                 .conversationId(conversation.getId())
+                .citations(citations)
                 .build();
+    }
+
+    @lombok.Data
+    @lombok.Builder
+    public static class Citation {
+        private String source;
+        private String text;
+        private Long documentId;
     }
 
     @lombok.Data
@@ -141,5 +183,6 @@ public class ChatService {
         private String answer;
         private String modelUsed;
         private Long conversationId;
+        private List<Citation> citations;
     }
 }

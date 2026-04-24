@@ -21,6 +21,8 @@ public class SpringAiChatService {
     private final AuditLogRepository auditLogRepository;
     private final ConversationService conversationService;
     private final com.jdeveloperweb.javarag.repository.ChatMessageRepository chatMessageRepository;
+    private final TokenCostService tokenCostService;
+    private final MetricsService metricsService;
 
     public ChatService.ChatResponse chat(String question, String provider, String tenantId, Long conversationId) {
         long startTime = System.currentTimeMillis();
@@ -68,13 +70,16 @@ public class SpringAiChatService {
                 - Ao final, inclua uma seção chamada "Base consultada" com os títulos dos documentos utilizados.
                 """;
 
-        String answer = chatClient.prompt()
+        org.springframework.ai.chat.model.ChatResponse response = chatClient.prompt()
                 .system(systemPrompt)
                 .user(u -> u.text("PERGUNTA: {question}\n\nCONTEXTO:\n{context}")
                         .param("question", question)
                         .param("context", contextBuilder.toString()))
                 .call()
-                .content();
+                .chatResponse();
+
+        String answer = response.getResult().getOutput().getContent();
+        org.springframework.ai.chat.metadata.Usage usage = response.getMetadata().getUsage();
 
         // 5. Persistence
         com.jdeveloperweb.javarag.model.Conversation conversation;
@@ -94,12 +99,35 @@ public class SpringAiChatService {
                 .role("USER")
                 .build());
 
-        // Save AI Message
+        // Build citations
+        List<ChatService.Citation> citations = segments.stream()
+                .map(segment -> ChatService.Citation.builder()
+                        .source(segment.metadata().getString("title"))
+                        .text(segment.text())
+                        .documentId(Long.parseLong(segment.metadata().getString("documentId")))
+                        .build())
+                .collect(java.util.stream.Collectors.toList());
+
+        // Serialize citations to JSON
+        String citationsJson = null;
+        try {
+            citationsJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(citations);
+        } catch (Exception e) {
+            log.error("Failed to serialize citations", e);
+        }
+
+        // Save AI Message with citations
         chatMessageRepository.save(com.jdeveloperweb.javarag.model.ChatMessage.builder()
                 .conversation(conversation)
                 .content(answer)
                 .role("ASSISTANT")
+                .citationsJson(citationsJson)
                 .build());
+
+        long duration = System.currentTimeMillis() - startTime;
+        int pTokens = (usage != null && usage.getPromptTokens() != null) ? usage.getPromptTokens().intValue() : 0;
+        int cTokens = (usage != null && usage.getGenerationTokens() != null) ? usage.getGenerationTokens().intValue() : 0;
+        double cost = tokenCostService.calculateCost(provider, pTokens, cTokens);
 
         // 6. Audit Log
         auditLogRepository.save(AuditLog.builder()
@@ -107,13 +135,20 @@ public class SpringAiChatService {
                 .userQuery(question)
                 .aiResponse(answer)
                 .modelUsed(provider + " (Spring AI)")
-                .responseTimeMillis(System.currentTimeMillis() - startTime)
+                .responseTimeMillis(duration)
+                .promptTokens(pTokens)
+                .completionTokens(cTokens)
+                .totalTokens(pTokens + cTokens)
+                .estimatedCost(cost)
                 .build());
+
+        metricsService.recordUsage(provider, pTokens, cTokens, cost);
 
         return ChatService.ChatResponse.builder()
                 .answer(answer)
                 .modelUsed(provider + " (Spring AI)")
                 .conversationId(conversation.getId())
+                .citations(citations)
                 .build();
     }
 }

@@ -3,9 +3,12 @@ import { Layout, MessageSquare, Upload, Settings, Database, Globe } from 'lucide
 import ChatView from './components/ChatView';
 import IngestionView from './components/IngestionView';
 import ConfigView from './components/ConfigView';
+import AuditLogView from './components/AuditLogView';
+import ObservabilityView from './components/ObservabilityView';
+import { History, BarChart3 } from 'lucide-react';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'ingestion' | 'config'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'ingestion' | 'config' | 'audit' | 'observability'>('chat');
 
   return (
     <div className="flex h-screen w-full bg-white text-slate-900 font-medium">
@@ -39,6 +42,26 @@ function App() {
           >
             <Upload className="w-5 h-5" />
             <span className="font-semibold hidden lg:block text-sm">Library</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('audit')}
+            className={`w-full flex items-center gap-3 px-4 py-3 transition-all ${
+              activeTab === 'audit' ? 'flat-nav-active' : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <History className="w-5 h-5" />
+            <span className="font-semibold hidden lg:block text-sm">Audit Log</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('observability')}
+            className={`w-full flex items-center gap-3 px-4 py-3 transition-all ${
+              activeTab === 'observability' ? 'flat-nav-active' : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <BarChart3 className="w-5 h-5" />
+            <span className="font-semibold hidden lg:block text-sm">Observability</span>
           </button>
 
           <button
@@ -79,6 +102,8 @@ function App() {
             {activeTab === 'chat' && <ChatView />}
             {activeTab === 'ingestion' && <IngestionView />}
             {activeTab === 'config' && <ConfigView />}
+            {activeTab === 'audit' && <AuditLogView />}
+            {activeTab === 'observability' && <ObservabilityView />}
           </div>
         </div>
       </main>

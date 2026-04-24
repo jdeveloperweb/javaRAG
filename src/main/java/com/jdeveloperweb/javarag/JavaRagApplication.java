@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
     org.springframework.ai.autoconfigure.anthropic.AnthropicAutoConfiguration.class,
     org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration.class
 })
+@org.springframework.scheduling.annotation.EnableAsync
 public class JavaRagApplication {
 
     public static void main(String[] args) {

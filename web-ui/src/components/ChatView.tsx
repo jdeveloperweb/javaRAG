@@ -2,6 +2,15 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Sparkles, Loader2, PlusCircle, Trash2, Clock, MessageSquare, Menu, X } from 'lucide-react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+interface Citation {
+  source: string;
+  text: string;
+  documentId?: number;
+}
 
 interface Message {
   id: string;
@@ -9,6 +18,7 @@ interface Message {
   content: string;
   modelUsed?: string;
   timestamp: Date;
+  citations?: Citation[];
 }
 
 interface Conversation {
@@ -23,11 +33,16 @@ const ChatView = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [provider, setProvider] = useState<'OPENAI' | 'ANTHROPIC'>('OPENAI');
   const [useSpringAi, setUseSpringAi] = useState(true);
+  const [configuredProviders, setConfiguredProviders] = useState<Set<string>>(new Set());
   
   // History states
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // Viewer Modal state
+  const [viewerData, setViewerData] = useState<{title: string, fullText: string, chunkText: string} | null>(null);
+  const [showFullDoc, setShowFullDoc] = useState(false);
 
   useEffect(() => {
     fetchActiveProvider();
@@ -37,9 +52,25 @@ const ChatView = () => {
   const fetchActiveProvider = async () => {
     try {
       const response = await axios.get('/api/v1/config');
-      const active = response.data.find((c: any) => c.active);
-      if (active && (active.providerName === 'OPENAI' || active.providerName === 'ANTHROPIC')) {
+      const configs: any[] = response.data;
+
+      // Determine which providers have a non-empty API key
+      const withKey = new Set<string>(
+        configs
+          .filter((c: any) => c.apiKey && c.apiKey.trim().length > 0)
+          .map((c: any) => c.providerName as string)
+      );
+      setConfiguredProviders(withKey);
+
+      // Pick the active provider, but only if it has a key configured
+      const active = configs.find((c: any) => c.active);
+      if (active && withKey.has(active.providerName) &&
+          (active.providerName === 'OPENAI' || active.providerName === 'ANTHROPIC')) {
         setProvider(active.providerName);
+      } else {
+        // Fallback to first configured provider
+        if (withKey.has('OPENAI')) setProvider('OPENAI');
+        else if (withKey.has('ANTHROPIC')) setProvider('ANTHROPIC');
       }
     } catch (error) {
       console.error('Error fetching active provider:', error);
@@ -59,12 +90,23 @@ const ChatView = () => {
     setIsLoading(true);
     try {
       const response = await axios.get(`/api/v1/chat/conversations/${conversationId}/messages`);
-      const historyMessages: Message[] = response.data.map((m: any) => ({
-        id: m.id.toString(),
-        role: m.role.toLowerCase() === 'user' ? 'user' : 'assistant',
-        content: m.content,
-        timestamp: new Date(m.createdAt),
-      }));
+      const historyMessages: Message[] = response.data.map((m: any) => {
+        let citations: Citation[] | undefined;
+        if (m.citationsJson) {
+          try {
+            citations = JSON.parse(m.citationsJson);
+          } catch (e) {
+            console.error('Failed to parse citations JSON', e);
+          }
+        }
+        return {
+          id: m.id.toString(),
+          role: m.role.toLowerCase() === 'user' ? 'user' : 'assistant',
+          content: m.content,
+          timestamp: new Date(m.createdAt),
+          citations,
+        };
+      });
       setMessages(historyMessages);
       setCurrentConversationId(conversationId);
     } catch (error) {
@@ -107,6 +149,51 @@ const ChatView = () => {
     }
   };
 
+  const handleCitationClick = async (citation: Citation) => {
+    if (!citation.documentId) return;
+    setShowFullDoc(false);
+    try {
+      const response = await axios.get(`/api/v1/documents/${citation.documentId}`);
+      setViewerData({
+        title: citation.source,
+        fullText: response.data.extractedText,
+        chunkText: citation.text
+      });
+    } catch (err) {
+      console.error("Failed to load document", err);
+    }
+  };
+
+  const highlightText = (fullText: string, chunkText: string) => {
+    if (!fullText || !chunkText) return fullText;
+    const parts = fullText.split(chunkText);
+    if (parts.length === 1) return fullText;
+    
+    return (
+      <>
+        {parts.map((part, i) => (
+          <React.Fragment key={i}>
+            <span className="whitespace-pre-wrap">{part}</span>
+            {i !== parts.length - 1 && (
+              <mark className="bg-amber-200 text-amber-900 rounded px-1 shadow-sm whitespace-pre-wrap" id="highlighted-chunk">{chunkText}</mark>
+            )}
+          </React.Fragment>
+        ))}
+      </>
+    );
+  };
+
+  /** Extract [n] references from AI text, returns 1-based indices */
+  const getCitedIndices = (text: string): Set<number> => {
+    const regex = /\[(\d+)\]/g;
+    const indices = new Set<number>();
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      indices.add(parseInt(match[1], 10));
+    }
+    return indices;
+  };
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -146,6 +233,7 @@ const ChatView = () => {
         content: response.data.answer,
         modelUsed: response.data.modelUsed,
         timestamp: new Date(),
+        citations: response.data.citations,
       };
 
       setMessages(prev => [...prev, aiMessage]);
@@ -252,17 +340,25 @@ const ChatView = () => {
             <div className="flex items-center gap-4">
               <div className="flex bg-slate-100 rounded-xl p-1 shadow-inner">
                 <button
-                  onClick={() => setProvider('OPENAI')}
+                  onClick={() => configuredProviders.has('OPENAI') && setProvider('OPENAI')}
+                  disabled={!configuredProviders.has('OPENAI')}
+                  title={!configuredProviders.has('OPENAI') ? 'API Key não configurada' : ''}
                   className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all ${
-                    provider === 'OPENAI' ? 'bg-white text-primary-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'
+                    !configuredProviders.has('OPENAI')
+                      ? 'text-slate-300 cursor-not-allowed opacity-50'
+                      : provider === 'OPENAI' ? 'bg-white text-primary-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
                   OpenAI
                 </button>
                 <button
-                  onClick={() => setProvider('ANTHROPIC')}
+                  onClick={() => configuredProviders.has('ANTHROPIC') && setProvider('ANTHROPIC')}
+                  disabled={!configuredProviders.has('ANTHROPIC')}
+                  title={!configuredProviders.has('ANTHROPIC') ? 'API Key não configurada' : ''}
                   className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all ${
-                    provider === 'ANTHROPIC' ? 'bg-white text-primary-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'
+                    !configuredProviders.has('ANTHROPIC')
+                      ? 'text-slate-300 cursor-not-allowed opacity-50'
+                      : provider === 'ANTHROPIC' ? 'bg-white text-primary-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
                   Claude
@@ -328,11 +424,68 @@ const ChatView = () => {
                         ? 'bg-primary-600 text-white rounded-tr-none' 
                         : 'bg-white text-slate-800 rounded-tl-none border border-slate-100 shadow-md shadow-slate-200/50'
                     }`}>
-                      <div className="prose prose-slate max-w-none text-[15px] leading-relaxed">
-                        {m.content.split('\n').map((line, i) => (
-                          <p key={i} className={i > 0 ? 'mt-3' : ''}>{line}</p>
-                        ))}
+                      <div className={`prose prose-slate max-w-none text-[15px] leading-relaxed ${m.role === 'user' ? 'prose-invert prose-p:text-white prose-headings:text-white prose-strong:text-white prose-a:text-blue-200' : ''}`}>
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            code(props) {
+                              const {children, className, node, ...rest} = props
+                              const match = /language-(\w+)/.exec(className || '')
+                              return match ? (
+                                <SyntaxHighlighter
+                                  {...rest}
+                                  PreTag="div"
+                                  children={String(children).replace(/\n$/, '')}
+                                  language={match[1]}
+                                  style={vscDarkPlus as any}
+                                />
+                              ) : (
+                                <code {...rest} className={className}>
+                                  {children}
+                                </code>
+                              )
+                            }
+                          }}
+                        >
+                          {m.content}
+                        </ReactMarkdown>
                       </div>
+
+                      {m.citations && m.citations.length > 0 && (() => {
+                        const cited = getCitedIndices(m.content);
+                        // Only show citations referenced in text; fallback to all if none detected
+                        const citationsToShow = cited.size > 0
+                          ? m.citations
+                              .map((c, i) => ({ ...c, originalIndex: i + 1 }))
+                              .filter(c => cited.has(c.originalIndex))
+                          : m.citations.map((c, i) => ({ ...c, originalIndex: i + 1 }));
+
+                        if (citationsToShow.length === 0) return null;
+
+                        return (
+                          <div className="mt-4 pt-4 border-t border-slate-100">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                              <Sparkles className="w-3 h-3" />
+                              Fontes Utilizadas
+                            </p>
+                            <div className="flex flex-col gap-2">
+                              {citationsToShow.map((c) => (
+                                <div 
+                                  key={c.originalIndex} 
+                                  onClick={() => handleCitationClick(c)}
+                                  className="bg-slate-50 border border-slate-100 rounded-lg p-2.5 text-xs cursor-pointer hover:bg-white hover:border-primary-200 hover:shadow-sm hover:-translate-y-0.5 transition-all group/cit"
+                                >
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="font-bold text-primary-600 block">[{c.originalIndex}] {c.source}</span>
+                                    <span className="text-[10px] text-slate-400 group-hover/cit:text-primary-400 font-semibold tracking-wider">VER DOCUMENTO</span>
+                                  </div>
+                                  <span className="text-slate-500 line-clamp-2" title={c.text}>{c.text}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                     {m.modelUsed && (
                       <span className="absolute -bottom-5 left-1 text-[10px] font-bold text-slate-400 uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity">
@@ -413,6 +566,77 @@ const ChatView = () => {
           </motion.div>
         </div>
       </div>
+
+      {/* Document Viewer Modal */}
+      <AnimatePresence>
+        {viewerData && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
+            onClick={() => setViewerData(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden"
+            >
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-primary-100 text-primary-600 rounded-xl flex items-center justify-center">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800">{viewerData.title}</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Trecho Citado</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setViewerData(null)}
+                  className="p-2 hover:bg-slate-200 rounded-lg text-slate-500 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-6 overflow-y-auto custom-scrollbar bg-white text-sm text-slate-700 leading-relaxed">
+                {/* Chunk text - always visible */}
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl shadow-inner mb-4">
+                  <p className="text-[10px] font-bold text-amber-600 mb-2 uppercase tracking-widest">Trecho Utilizado na Resposta</p>
+                  <span className="whitespace-pre-wrap text-slate-800 font-sans text-sm leading-relaxed">{viewerData.chunkText}</span>
+                </div>
+
+                {/* Toggle to expand full document */}
+                {viewerData.fullText && (
+                  <div>
+                    <button
+                      onClick={() => setShowFullDoc(!showFullDoc)}
+                      className="flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-primary-600 transition-colors mb-3 uppercase tracking-widest"
+                    >
+                      <span>{showFullDoc ? '▼ Ocultar Documento Completo' : '▶ Ver Documento Completo'}</span>
+                    </button>
+                    {showFullDoc && (
+                      <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl text-sm text-slate-700 leading-relaxed font-serif"
+                           ref={node => {
+                             if (node) {
+                               setTimeout(() => {
+                                 const mark = node.querySelector('#highlighted-chunk');
+                                 if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                               }, 200);
+                             }
+                           }}>
+                        {highlightText(viewerData.fullText, viewerData.chunkText)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

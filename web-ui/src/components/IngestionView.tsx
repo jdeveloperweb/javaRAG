@@ -8,6 +8,7 @@ interface Document {
   status: 'RECEIVED' | 'EXTRACTING' | 'CHUNKING' | 'EMBEDDING' | 'INDEXED' | 'FAILED';
   createdAt: string;
   chunkCount: number;
+  progress?: number;
 }
 
 interface Chunk {
@@ -64,6 +65,20 @@ const IngestionView = () => {
     } finally {
       setIsUploading(false);
       setTimeout(() => setUploadStatus(null), 3000);
+    }
+  };
+
+  const handleProcess = async (id: number) => {
+    try {
+      // Optimistic update
+      setDocuments(docs => docs.map(d => 
+        d.id === id ? { ...d, status: 'EXTRACTING', progress: 5 } : d
+      ));
+      await axios.post(`/api/v1/ingestion/process/${id}`);
+      fetchDocuments();
+    } catch (error) {
+      console.error('Processing failed:', error);
+      fetchDocuments(); // Revert on failure
     }
   };
 
@@ -157,17 +172,17 @@ const IngestionView = () => {
           </div>
           <div>
             <h3 className="text-lg font-bold text-slate-800 uppercase tracking-tight">
-              {isUploading ? 'Processando Documento...' : 'Adicionar ao Acervo'}
+              {isUploading ? 'Enviando Arquivo...' : 'Adicionar ao Acervo'}
             </h3>
             <p className="text-slate-500 mt-2 text-sm">PDF, TXT ou Markdown são bem-vindos</p>
           </div>
           {isUploading && (
             <div className="max-w-xs mx-auto space-y-2">
               <div className="h-1 bg-slate-200 rounded-full overflow-hidden">
-                <div className="h-full bg-flat-blue animate-pulse" style={{ width: '60%' }} />
+                <div className="h-full bg-flat-blue animate-pulse" style={{ width: '100%' }} />
               </div>
               <p className="text-[10px] font-black text-flat-blue uppercase tracking-[0.2em] animate-pulse">
-                Executando pipeline de RAG...
+                Fazendo upload e extraindo texto...
               </p>
             </div>
           )}
@@ -207,8 +222,34 @@ const IngestionView = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-6">
+                <div className="flex items-center gap-6 flex-1 justify-end">
+                  {doc.status !== 'INDEXED' && doc.status !== 'FAILED' && doc.status !== 'RECEIVED' && (
+                    <div className="w-32 space-y-1">
+                      <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-flat-blue transition-all duration-500" 
+                          style={{ width: `${doc.progress || 0}%` }} 
+                        />
+                      </div>
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter text-right">
+                        {doc.progress || 0}%
+                      </p>
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-2">
+                    {doc.status === 'RECEIVED' && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleProcess(doc.id);
+                        }}
+                        className="px-4 py-1.5 bg-flat-blue text-white rounded-md text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 transition-all active:scale-95 flex items-center gap-2 shadow-sm"
+                      >
+                        <Cpu className="w-3 h-3" />
+                        Incorporar
+                      </button>
+                    )}
                     <StatusBadge status={doc.status} />
                   </div>
 

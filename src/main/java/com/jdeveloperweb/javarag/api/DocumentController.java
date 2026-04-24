@@ -42,7 +42,7 @@ public class DocumentController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteDocument(@PathVariable Long id) {
         if (documentRepository.existsById(id)) {
-            documentRepository.deleteById(id);
+            ingestionService.deleteDocument(id);
             return ResponseEntity.ok().build();
         }
         return ResponseEntity.notFound().build();

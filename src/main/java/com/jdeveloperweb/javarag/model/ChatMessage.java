@@ -30,6 +30,9 @@ public class ChatMessage {
 
     private String role; // USER or ASSISTANT
 
+    @Column(columnDefinition = "TEXT")
+    private String citationsJson; // JSON array of citations (only for ASSISTANT messages)
+
     private LocalDateTime createdAt;
 
     @PrePersist

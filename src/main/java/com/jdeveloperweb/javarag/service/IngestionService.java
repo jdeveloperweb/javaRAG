@@ -30,32 +30,47 @@ public class IngestionService {
     private final jakarta.persistence.EntityManager entityManager;
 
     @Transactional
-    public Long ingestText(String title, String text, String tenantId, String collectionId) {
-        log.info("🚀 [INGESTION] Starting ingestion for document: '{}'", title);
-
-        // 1. Create and save Document metadata
+    public Long createDocument(String title, String text, String tenantId, String collectionId) {
+        log.info("[INGESTION] Creating document record: '{}'", title);
         Document document = Document.builder()
                 .title(title)
                 .tenantId(tenantId)
                 .collectionId(collectionId)
+                .extractedText(text)
                 .status(Document.DocumentStatus.RECEIVED)
+                .progress(0)
                 .build();
-        document = documentRepository.save(document);
+        return documentRepository.save(document).getId();
+    }
+
+    @org.springframework.scheduling.annotation.Async
+    public void processIngestionAsync(Long documentId) {
+        Document document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new RuntimeException("Document not found: " + documentId));
+        
+        String title = document.getTitle();
+        String text = document.getExtractedText();
+        String tenantId = document.getTenantId();
+        String collectionId = document.getCollectionId();
 
         try {
-            // 2. Chunking
-            log.info("✂️ [STAGE] Chunking text...");
+            log.info("[INGESTION] Starting async processing for: '{}'", title);
+            
+            // 1. Chunking
+            log.info("[STAGE] Chunking text...");
             document.setStatus(Document.DocumentStatus.CHUNKING);
+            document.setProgress(20);
             documentRepository.save(document);
             
-            DocumentSplitter splitter = DocumentSplitters.recursive(500, 100);
+            DocumentSplitter splitter = DocumentSplitters.recursive(1000, 200);
             dev.langchain4j.data.document.Document lcDocument = dev.langchain4j.data.document.Document.from(text);
             List<TextSegment> segments = splitter.split(lcDocument);
-            log.info("📦 [CHUNK] Document split into {} segments", segments.size());
+            log.info("[CHUNK] Document split into {} segments", segments.size());
 
-            // 3. Embeddings & Indexing
-            log.info("🧠 [STAGE] Generating embeddings and indexing...");
+            // 2. Embeddings & Indexing
+            log.info("[STAGE] Generating embeddings and indexing...");
             document.setStatus(Document.DocumentStatus.EMBEDDING);
+            document.setProgress(50);
             documentRepository.save(document);
             
             EmbeddingModel embeddingModel = modelService.getEmbeddingModel("OPENAI");
@@ -79,20 +94,51 @@ public class IngestionService {
                         .chunkExternalId(embeddingId)
                         .build();
                 chunks.add(chunk);
+                
+                // Update progress every 10%
+                if (segments.size() > 10 && i % (segments.size() / 10) == 0) {
+                    int currentProgress = 50 + (int) ((i / (float) segments.size()) * 45);
+                    document.setProgress(currentProgress);
+                    documentRepository.save(document);
+                }
             }
             chunkRepository.saveAll(chunks);
 
             document.setStatus(Document.DocumentStatus.INDEXED);
+            document.setProgress(100);
             documentRepository.save(document);
-            log.info("✅ [INGESTION] Completed: {} chunks indexed for '{}'", segments.size(), title);
+            log.info("[INGESTION] Completed: {} chunks indexed for '{}'", segments.size(), title);
 
-            return document.getId();
         } catch (Exception e) {
             log.error("Error ingesting document: {}", title, e);
             document.setStatus(Document.DocumentStatus.FAILED);
+            document.setProgress(100);
             documentRepository.save(document);
-            throw new RuntimeException("Ingestion failed", e);
         }
+    }
+
+    @Transactional
+    public void deleteDocument(Long id) {
+        Document document = documentRepository.findById(id).orElse(null);
+        if (document == null) return;
+        
+        List<Chunk> chunks = chunkRepository.findByDocumentIdOrderByOrdinalAsc(id);
+        List<String> embeddingIds = chunks.stream()
+                .map(Chunk::getChunkExternalId)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+                
+        if (!embeddingIds.isEmpty()) {
+            String idsList = embeddingIds.stream().map(eid -> "'" + eid + "'").collect(java.util.stream.Collectors.joining(","));
+            try {
+                entityManager.createNativeQuery("DELETE FROM test_embeddings WHERE id::text IN (" + idsList + ")").executeUpdate();
+            } catch (Exception e) {
+                log.error("Failed to delete embeddings for document {}", id, e);
+            }
+        }
+        
+        chunkRepository.deleteAllInBatch(chunks);
+        documentRepository.delete(document);
     }
 
     @Transactional
