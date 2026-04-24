@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: javaRAG
+  datasource:
+    url: jdbc:postgresql://localhost:5432/javarag
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+# LangChain4j configurations will be handled dynamically in code
+# as per user requirement to store keys in database and switch via API

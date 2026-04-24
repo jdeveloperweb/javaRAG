@@ -1,0 +1,22 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Project specific
+TODO.md
+
+# Logs
+*.log
+
+# Temp
+tmp/
+.claude/CLAUDE.md.tmp
