@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, Coins, Zap, BarChart3, Clock, ArrowUpRight, TrendingUp } from 'lucide-react';
+import { Activity, Coins, Zap, ChartColumn, Clock, ArrowUpRight, TrendingUp } from 'lucide-react';
 import axios from 'axios';
 
 interface Stats {
@@ -34,7 +34,7 @@ const ObservabilityView = () => {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] animate-pulse">
-          Analizando métricas...
+          Analizando mÃ©tricas...
         </div>
       </div>
     );
@@ -69,16 +69,16 @@ const ObservabilityView = () => {
           trend="+2.4%"
         />
         <StatCard 
-          title="Latência Média" 
+          title="LatÃªncia MÃ©dia" 
           value={`${stats.avgResponseTime.toFixed(0)}ms`} 
           icon={<Clock className="w-5 h-5 text-blue-500" />}
-          subtitle="Tempo médio de resposta"
+          subtitle="Tempo mÃ©dio de resposta"
         />
         <StatCard 
-          title="Requisições" 
+          title="RequisiÃ§Ãµes" 
           value={stats.totalRequests.toString()} 
-          icon={<BarChart3 className="w-5 h-5 text-indigo-500" />}
-          subtitle="Total de interações"
+          icon={<ChartColumn className="w-5 h-5 text-indigo-500" />}
+          subtitle="Total de interaÃ§Ãµes"
         />
       </div>
 
@@ -87,7 +87,7 @@ const ObservabilityView = () => {
           <div className="flex items-center justify-between mb-8">
             <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-emerald-500" />
-              Projeção de Custos
+              ProjeÃ§Ã£o de Custos
             </h3>
           </div>
           
@@ -106,7 +106,7 @@ const ObservabilityView = () => {
              ))}
           </div>
           <div className="flex justify-between mt-4 text-[9px] font-black text-slate-300 uppercase tracking-widest px-2">
-            <span>Últimos 10 dias</span>
+            <span>Ãšltimos 10 dias</span>
             <span>Hoje</span>
           </div>
         </div>

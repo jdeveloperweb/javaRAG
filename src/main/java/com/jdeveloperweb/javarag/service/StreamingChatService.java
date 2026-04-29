@@ -12,6 +12,7 @@ import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.chat.StreamingChatLanguageModel;
 import dev.langchain4j.model.output.Response;
+import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.StreamingResponseHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -43,11 +45,30 @@ public class StreamingChatService {
         log.info("[STREAM] Chat request for tenant {}: {}", tenantId, question);
 
         try {
-            // 1. Get streaming model
+            // 1. Get models
             StreamingChatLanguageModel streamingModel = modelService.getStreamingChatModel(provider);
+            ChatLanguageModel chatModel = modelService.getChatModel(provider);
 
-            // 2. Hybrid Retrieval
-            List<TextSegment> segments = retrievalService.retrieveHybrid(question, tenantId, 5);
+            // 2. Load History if exists
+            List<ChatMessage> dbHistory = new ArrayList<>();
+            if (conversationId != null) {
+                dbHistory = chatMessageRepository.findByConversationIdOrderByCreatedAtAsc(conversationId);
+                if (dbHistory.size() > 10) {
+                    dbHistory = dbHistory.subList(dbHistory.size() - 10, dbHistory.size());
+                }
+            }
+
+            // 3. Contextualize Question (Rewrite)
+            String effectiveQuestion = question;
+            if (!dbHistory.isEmpty()) {
+                log.info("[STREAM] Contextualizing question...");
+                effectiveQuestion = rewriteQuestion(question, dbHistory, chatModel);
+                log.info("[STREAM] Standalone question: {}", effectiveQuestion);
+            }
+
+            // 4. Exhaustive Retrieval
+            log.info("[STREAM] Using exhaustive retrieval for maximum context...");
+            List<TextSegment> segments = retrievalService.retrieveExhaustive(effectiveQuestion, tenantId, 10, provider);
 
             if (segments.isEmpty()) {
                 sendEvent(emitter, "token", "Não encontrei evidência suficiente no material recuperado para responder com segurança.");
@@ -78,7 +99,7 @@ public class StreamingChatService {
 
             sendEvent(emitter, "citations", objectMapper.writeValueAsString(citations));
 
-            // 4. Construct context
+            // 5. Construct context
             StringBuilder contextBuilder = new StringBuilder();
             for (int i = 0; i < segments.size(); i++) {
                 TextSegment segment = segments.get(i);
@@ -86,24 +107,40 @@ public class StreamingChatService {
                         i + 1, segment.text(), segment.metadata().getString("title")));
             }
 
-            // 5. Construct Prompt
+            // 6. Construct Prompt
             String systemPrompt = """
-                    Você é um especialista em análise de documentos corporativos.
-                    Seu objetivo é fornecer respostas precisas, úteis e fundamentadas no CONTEXTO fornecido.
+                    Você é um assistente de RAG corporativo focado em precisão e exaustão técnica.
+                    Responda APENAS com base no CONTEXTO AUTORIZADO fornecido.
                     
-                    DIRETRIZES:
-                    1. Analise cuidadosamente todos os fragmentos do CONTEXTO AUTORIZADO.
-                    2. Tente conectar as informações entre diferentes fragmentos para compor uma resposta completa.
-                    3. Use um tom profissional e prestativo.
-                    4. SEMPRE cite as fontes usando o formato [n] ao lado de cada afirmação.
+                    OBJETIVO:
+                    - fornecer resposta correta, objetiva e COMPLETAMENTE EXAUSTIVA (não omita dados presentes no contexto).
+                    - se o usuário perguntar por tabelas ou campos, liste TODOS que aparecerem no contexto relacionado.
+                    - citar as evidências utilizadas usando o formato [n]
+                    - indicar limitação quando faltarem dados
                     
-                    REGRAS DE SEGURANÇA:
-                    - Se a informação NÃO estiver no contexto de forma alguma, explique educadamente o que você encontrou e o que está faltando.
-                    - Evite dizer apenas "Não encontrei evidência" se houver informações parciais ou relacionadas; em vez disso, apresente o que foi encontrado.
-                    - Nunca invente fatos ou datas.
+                    NÃO FAÇA:
+                    - não invente
+                    - não complete lacunas com conhecimento externo
+                    - não cite fonte não presente no contexto
+                    
+                    POLÍTICA DE RESPOSTA:
+                    - Use apenas os fatos que aparecerem no contexto.
+                    - Se houver evidência insuficiente, diga: "Não encontrei evidência suficiente no material recuperado para responder com segurança."
+                    - Sempre associe afirmações factuais a citações inline.
                     
                     FORMATO:
                     - Resposta em português do Brasil.
+                    - Para dados estruturados (tabelas, campos, tipos), use o formato de TABELA.
+                    - REGRAS IMPORTANTES:
+                        1. Pule DUAS LINHAS antes da tabela.
+                        2. Use apenas UM '|' para separar colunas. NUNCA use '||' (mesmo que apareça assim no contexto).
+                        3. A tabela deve ter cabeçalho e linha separadora (|---|).
+                    - Exemplo:
+                    
+                    | Campo | Tipo |
+                    |---|---|
+                    | ID | INT |
+                    
                     - Ao final, inclua uma seção chamada "Base consultada" com os títulos únicos dos documentos utilizados.
                     """;
 
@@ -115,11 +152,18 @@ public class StreamingChatService {
                     %s
                     """, question, contextBuilder.toString());
 
-            // 6. Stream LLM response
+            // 7. Stream LLM response with History
             StringBuilder fullResponse = new StringBuilder();
 
+            List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
+            messages.add(new SystemMessage(systemPrompt));
+            if (!dbHistory.isEmpty()) {
+                messages.addAll(mapToLangChainMessages(dbHistory));
+            }
+            messages.add(new UserMessage(userPrompt));
+
             streamingModel.generate(
-                    List.of(new SystemMessage(systemPrompt), new UserMessage(userPrompt)),
+                    messages,
                     new StreamingResponseHandler<AiMessage>() {
                         @Override
                         public void onNext(String token) {
@@ -239,6 +283,39 @@ public class StreamingChatService {
         emitter.send(SseEmitter.event()
                 .name(eventName)
                 .data(data));
+    }
+
+    private String rewriteQuestion(String question, List<ChatMessage> history, ChatLanguageModel model) {
+        if (history == null || history.isEmpty()) return question;
+
+        StringBuilder historyBuilder = new StringBuilder();
+        for (ChatMessage msg : history) {
+            historyBuilder.append(msg.getRole()).append(": ").append(msg.getContent()).append("\n");
+        }
+
+        String prompt = String.format("""
+                Dada a seguinte conversa e uma pergunta de acompanhamento, reescreva a pergunta para que ela seja uma pergunta independente (standalone), mantendo o sentido original, mas incluindo o contexto necessário da conversa anterior.
+                
+                HISTÓRICO DA CONVERSA:
+                %s
+                
+                PERGUNTA DE ACOMPANHAMENTO:
+                %s
+                
+                REESCREVA APENAS A PERGUNTA (SEM EXPLICAÇÕES OU COMENTÁRIOS):
+                """, historyBuilder.toString(), question);
+
+        return model.generate(prompt);
+    }
+
+    private List<dev.langchain4j.data.message.ChatMessage> mapToLangChainMessages(List<ChatMessage> history) {
+        return history.stream().map(msg -> {
+            if ("USER".equalsIgnoreCase(msg.getRole())) {
+                return new UserMessage(msg.getContent());
+            } else {
+                return new AiMessage(msg.getContent());
+            }
+        }).collect(Collectors.toList());
     }
 
     // Payload DTOs

@@ -6,10 +6,11 @@ import ConfigView from './components/ConfigView';
 import AuditLogView from './components/AuditLogView';
 import ObservabilityView from './components/ObservabilityView';
 import RagasView from './components/RagasView';
-import { History, BarChart3, CheckCircle2 } from 'lucide-react';
+import AgentsView from './components/AgentsView';
+import { History, ChartColumn, CircleCheck, Bot } from 'lucide-react';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'ingestion' | 'config' | 'audit' | 'observability' | 'ragas'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'ingestion' | 'config' | 'audit' | 'observability' | 'ragas' | 'agents'>('chat');
 
   return (
     <div className="flex h-screen w-full bg-white text-slate-900 font-medium">
@@ -61,7 +62,7 @@ function App() {
               activeTab === 'observability' ? 'flat-nav-active' : 'text-slate-400 hover:text-white hover:bg-white/5'
             }`}
           >
-            <BarChart3 className="w-5 h-5" />
+            <ChartColumn className="w-5 h-5" />
             <span className="font-semibold hidden lg:block text-sm">Observability</span>
           </button>
 
@@ -71,8 +72,18 @@ function App() {
               activeTab === 'ragas' ? 'flat-nav-active' : 'text-slate-400 hover:text-white hover:bg-white/5'
             }`}
           >
-            <CheckCircle2 className="w-5 h-5" />
+            <CircleCheck className="w-5 h-5" />
             <span className="font-semibold hidden lg:block text-sm">RAGAS Tests</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('agents')}
+            className={`w-full flex items-center gap-3 px-4 py-3 transition-all ${
+              activeTab === 'agents' ? 'flat-nav-active' : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Bot className="w-5 h-5" />
+            <span className="font-semibold hidden lg:block text-sm">AI Agents</span>
           </button>
 
           <button
@@ -116,6 +127,7 @@ function App() {
             {activeTab === 'audit' && <AuditLogView />}
             {activeTab === 'observability' && <ObservabilityView />}
             {activeTab === 'ragas' && <RagasView />}
+            {activeTab === 'agents' && <AgentsView />}
           </div>
         </div>
       </main>

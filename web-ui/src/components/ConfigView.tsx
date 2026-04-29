@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Key, Shield, Save, CheckCircle2, Cpu, Sparkles, AlertCircle } from 'lucide-react';
+import { Key, Shield, Save, CircleCheck, Cpu, Sparkles, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -141,7 +141,7 @@ const ConfigView = () => {
                 {!configs[selectedProvider].apiKey && (
                   <div className="flex items-center gap-2 text-amber-600">
                     <AlertCircle className="w-4 h-4" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Não configurado</span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest">NÃ£o configurado</span>
                   </div>
                 )}
               </div>
@@ -157,14 +157,14 @@ const ConfigView = () => {
                         ...prev,
                         [selectedProvider]: { ...prev[selectedProvider], apiKey: e.target.value }
                       }))}
-                      placeholder="••••••••••••••••"
+                      placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                       className="w-full bg-white border-2 border-slate-100 rounded-xl px-4 py-4 text-slate-800 focus:outline-none focus:border-flat-blue transition-all font-mono text-sm"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2 block">Modelo Padrão</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2 block">Modelo PadrÃ£o</label>
                   <input
                     type="text"
                     value={configs[selectedProvider].defaultModel}
@@ -179,15 +179,15 @@ const ConfigView = () => {
                 <div className="flex items-center gap-3 p-4 bg-white/50 rounded-xl border-2 border-slate-100">
                   <label className="flex items-center gap-4 cursor-pointer w-full">
                     <div className="flex-1">
-                      <p className="text-xs font-bold text-slate-800 uppercase tracking-tight">Definir como Padrão</p>
-                      <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Usar este provedor por padrão no chat</p>
+                      <p className="text-xs font-bold text-slate-800 uppercase tracking-tight">Definir como PadrÃ£o</p>
+                      <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Usar este provedor por padrÃ£o no chat</p>
                     </div>
                     <div 
                       onClick={() => setConfigs(prev => ({
                         ...prev,
                         [selectedProvider]: { ...prev[selectedProvider], active: !prev[selectedProvider].active }
                       }))}
-                      className={`w-12 h-7 rounded-full relative transition-all ${configs[selectedProvider].active ? 'bg-emerald-500 shadow-inner' : 'bg-slate-200'}`}
+                      className={`w-12 h-7 rounded-full relative transition-all ${configs[selectedProvider].active ? 'bg-flat-blue shadow-inner' : 'bg-slate-200'}`}
                     >
                       <div className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${configs[selectedProvider].active ? 'translate-x-5' : ''}`} />
                     </div>
@@ -196,10 +196,10 @@ const ConfigView = () => {
 
                 <button
                   onClick={() => handleSave(selectedProvider)}
-                  className="w-full flex items-center justify-center gap-3 bg-flat-dark hover:bg-slate-900 text-white font-black py-5 rounded-xl transition-all active:scale-[0.98] uppercase text-xs tracking-[0.2em] shadow-xl shadow-slate-200"
+                  className="w-full flex items-center justify-center gap-3 bg-flat-blue hover:bg-blue-600 text-white font-black py-5 rounded-xl transition-all active:scale-[0.98] uppercase text-xs tracking-[0.2em] shadow-xl shadow-blue-100"
                 >
                   <Save className="w-5 h-5" />
-                  Salvar Configuração
+                  Salvar ConfiguraÃ§Ã£o
                 </button>
               </div>
             </motion.div>
@@ -209,7 +209,7 @@ const ConfigView = () => {
 
       {status && (
         <div className="fixed bottom-8 right-8 flex items-center gap-3 bg-slate-900 text-white px-6 py-4 rounded-xl shadow-2xl animate-fade-in border-b-4 border-emerald-500">
-          <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+          <CircleCheck className="w-5 h-5 text-emerald-500" />
           <span className="text-xs font-bold uppercase tracking-widest">{status}</span>
         </div>
       )}

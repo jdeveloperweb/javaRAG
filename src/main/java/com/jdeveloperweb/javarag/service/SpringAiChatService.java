@@ -9,7 +9,9 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -31,8 +33,25 @@ public class SpringAiChatService {
         // 1. Get models
         ChatModel chatModel = modelService.getSpringAiChatModel(provider);
 
-        // 2. Hybrid Retrieval
-        List<TextSegment> segments = retrievalService.retrieveHybrid(question, tenantId, 5);
+        // 2. Load History if exists
+        List<com.jdeveloperweb.javarag.model.ChatMessage> dbHistory = new ArrayList<>();
+        if (conversationId != null) {
+            dbHistory = chatMessageRepository.findByConversationIdOrderByCreatedAtAsc(conversationId);
+            if (dbHistory.size() > 10) {
+                dbHistory = dbHistory.subList(dbHistory.size() - 10, dbHistory.size());
+            }
+        }
+
+        // 3. Contextualize Question (Rewrite)
+        String effectiveQuestion = question;
+        if (!dbHistory.isEmpty()) {
+            log.info("🔄 [REWRITE] Contextualizing question (Spring AI)...");
+            effectiveQuestion = rewriteQuestion(question, dbHistory, chatModel);
+            log.info("📝 [REWRITE] Standalone question: {}", effectiveQuestion);
+        }
+
+        // 4. Hybrid Retrieval
+        List<TextSegment> segments = retrievalService.retrieveHybrid(effectiveQuestion, tenantId, 10);
 
         if (segments.isEmpty()) {
             return ChatService.ChatResponse.builder()
@@ -49,7 +68,7 @@ public class SpringAiChatService {
                     i + 1, segment.text(), segment.metadata().getString("title")));
         }
 
-        // 4. Spring AI ChatClient
+        // 6. Spring AI ChatClient
         ChatClient chatClient = ChatClient.builder(chatModel).build();
 
         String systemPrompt = """
@@ -67,11 +86,26 @@ public class SpringAiChatService {
                 
                 FORMATO:
                 - Resposta em português do Brasil.
+                - Para dados estruturados (tabelas, campos, tipos), use o formato de TABELA.
+                - REGRAS IMPORTANTES:
+                    1. Pule DUAS LINHAS antes da tabela.
+                    2. Use apenas UM '|' para separar colunas. NUNCA use '||' (mesmo que apareça assim no contexto).
+                    3. A tabela deve ter cabeçalho e linha separadora (|---|).
+                - Exemplo:
+                
+                | Campo | Tipo |
+                |---|---|
+                | ID | INT |
+                
                 - Ao final, inclua uma seção chamada "Base consultada" com os títulos dos documentos utilizados.
                 """;
 
+        // 7. Call LLM with History
+        List<org.springframework.ai.chat.messages.Message> historyMessages = mapToSpringAiMessages(dbHistory);
+        
         org.springframework.ai.chat.model.ChatResponse response = chatClient.prompt()
                 .system(systemPrompt)
+                .messages(historyMessages)
                 .user(u -> u.text("PERGUNTA: {question}\n\nCONTEXTO:\n{context}")
                         .param("question", question)
                         .param("context", contextBuilder.toString()))
@@ -150,5 +184,38 @@ public class SpringAiChatService {
                 .conversationId(conversation.getId())
                 .citations(citations)
                 .build();
+    }
+
+    private String rewriteQuestion(String question, List<com.jdeveloperweb.javarag.model.ChatMessage> history, ChatModel model) {
+        if (history == null || history.isEmpty()) return question;
+
+        StringBuilder historyBuilder = new StringBuilder();
+        for (com.jdeveloperweb.javarag.model.ChatMessage msg : history) {
+            historyBuilder.append(msg.getRole()).append(": ").append(msg.getContent()).append("\n");
+        }
+
+        String prompt = String.format("""
+                Dada a seguinte conversa e uma pergunta de acompanhamento, reescreva a pergunta para que ela seja uma pergunta independente (standalone), mantendo o sentido original, mas incluindo o contexto necessário da conversa anterior.
+                
+                HISTÓRICO DA CONVERSA:
+                %s
+                
+                PERGUNTA DE ACOMPANHAMENTO:
+                %s
+                
+                REESCREVA APENAS A PERGUNTA (SEM EXPLICAÇÕES OU COMENTÁRIOS):
+                """, historyBuilder.toString(), question);
+
+        return model.call(prompt);
+    }
+
+    private List<org.springframework.ai.chat.messages.Message> mapToSpringAiMessages(List<com.jdeveloperweb.javarag.model.ChatMessage> history) {
+        return history.stream().map(msg -> {
+            if ("USER".equalsIgnoreCase(msg.getRole())) {
+                return new org.springframework.ai.chat.messages.UserMessage(msg.getContent());
+            } else {
+                return new org.springframework.ai.chat.messages.AssistantMessage(msg.getContent());
+            }
+        }).collect(Collectors.toList());
     }
 }

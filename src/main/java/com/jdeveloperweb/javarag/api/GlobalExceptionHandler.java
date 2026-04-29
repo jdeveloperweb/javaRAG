@@ -20,8 +20,19 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body("Invalid argument: " + e.getMessage());
     }
 
+    @ExceptionHandler(org.springframework.web.context.request.async.AsyncRequestNotUsableException.class)
+    public void handleAsyncRequestNotUsableException(org.springframework.web.context.request.async.AsyncRequestNotUsableException e) {
+        log.debug("🔌 [SSE] Client disconnected or request timed out: {}", e.getMessage());
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<String> handleGeneralException(Exception e) {
+        // Check for common client disconnection exceptions in the cause chain
+        if (e.getMessage() != null && e.getMessage().contains("ServletOutputStream failed to flush")) {
+            log.debug("🔌 [IO] Client disconnected: {}", e.getMessage());
+            return null; // Let Spring handle it or just ignore
+        }
+        
         log.error("💥 [FATAL] Unexpected error: {} (Type: {})", e.getMessage(), e.getClass().getName(), e);
         return ResponseEntity.internalServerError().body("Fatal error: " + e.getMessage());
     }

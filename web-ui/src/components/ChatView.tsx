@@ -49,6 +49,10 @@ const ChatView = () => {
   // Viewer Modal state
   const [viewerData, setViewerData] = useState<{title: string, fullText: string, chunkText: string} | null>(null);
   const [showFullDoc, setShowFullDoc] = useState(false);
+  const [showCitations, setShowCitations] = useState<boolean>(() => {
+    const saved = localStorage.getItem('showCitations');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
 
   useEffect(() => {
     fetchActiveProvider();
@@ -325,16 +329,14 @@ const ChatView = () => {
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          const trimmedLine = line.trim();
-          if (!trimmedLine) continue;
-
           if (line.startsWith('event:')) {
             currentEvent = line.slice(6).trim();
           } else if (line.startsWith('data:')) {
             const data = line.slice(5);
             
             if (currentEvent === 'token') {
-              tokenQueueRef.current.push(data);
+              // No SSE, uma linha 'data:' vazia frequentemente representa um token de quebra de linha
+              tokenQueueRef.current.push(data === '' ? '\n' : data);
             } else if (currentEvent === 'citations') {
               try {
                 const citations: Citation[] = JSON.parse(data.trim());
@@ -473,7 +475,7 @@ const ChatView = () => {
                   title={!configuredProviders.has('OPENAI') ? 'API Key não configurada' : ''}
                   className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all ${
                     !configuredProviders.has('OPENAI')
-                      ? 'text-slate-300 cursor-not-allowed opacity-50'
+                      ? 'text-slate-400 cursor-not-allowed opacity-60'
                       : provider === 'OPENAI' ? 'bg-white text-primary-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
@@ -485,7 +487,7 @@ const ChatView = () => {
                   title={!configuredProviders.has('ANTHROPIC') ? 'API Key não configurada' : ''}
                   className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all ${
                     !configuredProviders.has('ANTHROPIC')
-                      ? 'text-slate-300 cursor-not-allowed opacity-50'
+                      ? 'text-slate-400 cursor-not-allowed opacity-60'
                       : provider === 'ANTHROPIC' ? 'bg-white text-primary-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
@@ -503,6 +505,22 @@ const ChatView = () => {
                   <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-300 ${useSpringAi ? 'translate-x-5' : ''}`} />
                 </div>
                 <span className="text-sm font-bold text-slate-600 group-hover:text-primary-600 transition-colors">Spring AI</span>
+              </label>
+
+              <div className="h-6 w-[1px] bg-slate-200 mx-2 hidden sm:block" />
+
+              <label className="hidden sm:flex items-center gap-3 cursor-pointer group">
+                <div 
+                  onClick={() => {
+                    const newVal = !showCitations;
+                    setShowCitations(newVal);
+                    localStorage.setItem('showCitations', JSON.stringify(newVal));
+                  }}
+                  className={`w-11 h-6 rounded-full relative transition-all duration-300 ${showCitations ? 'bg-amber-500 shadow-lg shadow-amber-200' : 'bg-slate-300'}`}
+                >
+                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-300 ${showCitations ? 'translate-x-5' : ''}`} />
+                </div>
+                <span className="text-sm font-bold text-slate-600 group-hover:text-amber-600 transition-colors">Referências</span>
               </label>
             </div>
             
@@ -574,7 +592,34 @@ const ChatView = () => {
                                   {children}
                                 </code>
                               )
-                            }
+                            },
+                            table: ({ children }) => (
+                              <div className="overflow-hidden my-4 rounded-xl border border-slate-200 shadow-sm">
+                                <table className="w-full text-sm text-left text-slate-600 border-collapse">
+                                  {children}
+                                </table>
+                              </div>
+                            ),
+                            thead: ({ children }) => (
+                              <thead className="text-xs text-slate-700 uppercase bg-slate-50 border-b border-slate-200">
+                                {children}
+                              </thead>
+                            ),
+                            th: ({ children }) => (
+                              <th className="px-4 py-3 font-bold bg-slate-50/50">
+                                {children}
+                              </th>
+                            ),
+                            td: ({ children }) => (
+                              <td className="px-4 py-3 border-b border-slate-100 last:border-0 bg-white">
+                                {children}
+                              </td>
+                            ),
+                            tr: ({ children }) => (
+                              <tr className="hover:bg-slate-50/30 transition-colors">
+                                {children}
+                              </tr>
+                            )
                           }}
                         >
                           {m.content}
@@ -584,7 +629,7 @@ const ChatView = () => {
                         )}
                       </div>
 
-                      {m.citations && m.citations.length > 0 && (() => {
+                      {showCitations && m.citations && m.citations.length > 0 && (() => {
                         const cited = getCitedIndices(m.content);
                         // Only show citations referenced in text; fallback to all if none detected
                         const citationsToShow = cited.size > 0

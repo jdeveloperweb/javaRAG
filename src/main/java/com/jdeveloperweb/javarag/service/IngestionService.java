@@ -17,6 +17,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 @RequiredArgsConstructor
@@ -65,65 +70,82 @@ public class IngestionService {
 
         try {
             log.info("[INGESTION] Starting async processing for: '{}'", title);
-            
-            // 1. Chunking
-            log.info("[STAGE] Chunking text...");
-            // document.setStatus(Document.DocumentStatus.CHUNKING); // Already set synchronously
-            // document.setProgress(20);
-            // documentRepository.save(document);
-            
-            DocumentSplitter splitter = DocumentSplitters.recursive(1000, 200);
-            dev.langchain4j.data.document.Document lcDocument = dev.langchain4j.data.document.Document.from(text);
-            List<TextSegment> segments = splitter.split(lcDocument);
-            log.info("[CHUNK] Document split into {} segments", segments.size());
 
-            // 2. Embeddings & Indexing
-            log.info("[STAGE] Generating embeddings and indexing...");
-            document.setStatus(Document.DocumentStatus.EMBEDDING);
-            document.setProgress(50);
-            documentRepository.save(document);
-            
+            DocumentSplitter splitter = DocumentSplitters.recursive(1000, 200);
+            List<TextSegment> segments = splitter.split(dev.langchain4j.data.document.Document.from(text));
+            int totalSegments = segments.size();
+            // Libera os 3MB de texto da heap — segments já tem tudo que precisamos
+            document.setExtractedText(null);
+            log.info("[CHUNK] Document '{}' split into {} segments", title, totalSegments);
+
+            documentRepository.updateStatusAndProgress(documentId, Document.DocumentStatus.EMBEDDING, 10);
+
             EmbeddingModel embeddingModel = modelService.getEmbeddingModel("OPENAI");
 
-            List<Chunk> chunks = new ArrayList<>();
-            for (int i = 0; i < segments.size(); i++) {
-                TextSegment segment = segments.get(i);
+            // Virtual threads: cada lote roda em seu próprio virtual thread.
+            // Semaphore limita chamadas simultâneas à API da OpenAI (evita rate limit 429).
+            // Lotes são I/O-bound (HTTP + DB), exatamente o caso de uso de virtual threads.
+            final int BATCH_SIZE = 100;
+            final int MAX_CONCURRENT = 4;
+            Semaphore semaphore = new Semaphore(MAX_CONCURRENT);
+            AtomicInteger completedChunks = new AtomicInteger(0);
+            List<Future<?>> futures = new ArrayList<>();
 
-                segment.metadata().put("documentId", document.getId().toString());
-                segment.metadata().put("tenantId", tenantId);
-                segment.metadata().put("collectionId", collectionId);
-                segment.metadata().put("title", title);
+            try (ExecutorService virtualExecutor = Executors.newVirtualThreadPerTaskExecutor()) {
+                for (int batchStart = 0; batchStart < totalSegments; batchStart += BATCH_SIZE) {
+                    final int start = batchStart;
+                    final int end = Math.min(batchStart + BATCH_SIZE, totalSegments);
+                    final List<TextSegment> batch = new ArrayList<>(segments.subList(start, end));
 
-                Embedding embedding = embeddingModel.embed(segment).content();
-                String embeddingId = embeddingStore.add(embedding, segment);
+                    for (int mi = 0; mi < batch.size(); mi++) {
+                        TextSegment segment = batch.get(mi);
+                        segment.metadata().put("documentId", documentId.toString());
+                        segment.metadata().put("tenantId", tenantId);
+                        segment.metadata().put("collectionId", collectionId);
+                        segment.metadata().put("title", title);
+                        segment.metadata().put("ordinal", String.valueOf(start + mi + 1));
+                    }
 
-                Chunk chunk = Chunk.builder()
-                        .document(document)
-                        .text(segment.text())
-                        .ordinal(i + 1)
-                        .chunkExternalId(embeddingId)
-                        .build();
-                chunks.add(chunk);
-                
-                // Update progress every 10%
-                if (segments.size() > 10 && i % (segments.size() / 10) == 0) {
-                    int currentProgress = 50 + (int) ((i / (float) segments.size()) * 45);
-                    document.setProgress(currentProgress);
-                    documentRepository.save(document);
+                    futures.add(virtualExecutor.submit(() -> {
+                        semaphore.acquire();
+                        try {
+                            List<Embedding> embeddings = embeddingModel.embedAll(batch).content();
+                            List<String> embeddingIds = embeddingStore.addAll(embeddings, batch);
+
+                            List<Chunk> batchChunks = new ArrayList<>(batch.size());
+                            for (int i = 0; i < batch.size(); i++) {
+                                batchChunks.add(Chunk.builder()
+                                        .document(document)
+                                        .text(batch.get(i).text())
+                                        .ordinal(start + i + 1)
+                                        .chunkExternalId(embeddingIds.get(i))
+                                        .build());
+                            }
+                            chunkRepository.saveAll(batchChunks);
+
+                            int done = completedChunks.addAndGet(batch.size());
+                            int progress = 10 + (int) ((done / (float) totalSegments) * 85);
+                            documentRepository.updateProgress(documentId, progress);
+                            log.info("[INGESTION] Lote {}/{} concluído", end, totalSegments);
+                            return null;
+                        } finally {
+                            semaphore.release();
+                        }
+                    }));
+                }
+
+                for (Future<?> future : futures) {
+                    future.get();
                 }
             }
-            chunkRepository.saveAll(chunks);
 
-            document.setStatus(Document.DocumentStatus.INDEXED);
-            document.setProgress(100);
-            documentRepository.save(document);
-            log.info("[INGESTION] Completed: {} chunks indexed for '{}'", segments.size(), title);
+            segments.clear();
+            documentRepository.updateStatusAndProgress(documentId, Document.DocumentStatus.INDEXED, 100);
+            log.info("[INGESTION] Concluído: {} chunks indexados para '{}'", totalSegments, title);
 
         } catch (Exception e) {
             log.error("Error ingesting document: {}", title, e);
-            document.setStatus(Document.DocumentStatus.FAILED);
-            document.setProgress(100);
-            documentRepository.save(document);
+            documentRepository.updateStatusAndProgress(documentId, Document.DocumentStatus.FAILED, 100);
         }
     }
 
@@ -131,13 +153,13 @@ public class IngestionService {
     public void deleteDocument(Long id) {
         Document document = documentRepository.findById(id).orElse(null);
         if (document == null) return;
-        
-        List<Chunk> chunks = chunkRepository.findByDocumentIdOrderByOrdinalAsc(id);
-        List<String> embeddingIds = chunks.stream()
+
+        // Busca só os IDs de embedding para limpar o pgvector — sem carregar o texto dos chunks
+        List<String> embeddingIds = chunkRepository.findByDocumentIdOrderByOrdinalAsc(id).stream()
                 .map(Chunk::getChunkExternalId)
                 .filter(java.util.Objects::nonNull)
                 .toList();
-                
+
         if (!embeddingIds.isEmpty()) {
             try {
                 embeddingStore.removeAll(embeddingIds);
@@ -145,8 +167,9 @@ public class IngestionService {
                 log.error("Failed to delete embeddings for document {}", id, e);
             }
         }
-        
-        chunkRepository.deleteAllInBatch(chunks);
+
+        // DELETE FROM chunks WHERE document_id = ? — uma condição, não um OR por chunk
+        chunkRepository.deleteByDocumentId(id);
         documentRepository.delete(document);
     }
 

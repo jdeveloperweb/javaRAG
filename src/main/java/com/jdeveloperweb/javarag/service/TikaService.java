@@ -7,7 +7,13 @@ import org.springframework.web.multipart.MultipartFile;
 @Service
 public class TikaService {
 
-    private final Tika tika = new Tika();
+    // setMaxStringLength(-1) remove o limite padrão de 100.000 chars para suportar arquivos grandes
+    private final Tika tika;
+
+    public TikaService() {
+        this.tika = new Tika();
+        this.tika.setMaxStringLength(-1);
+    }
 
     public String extractText(MultipartFile file) {
         try {

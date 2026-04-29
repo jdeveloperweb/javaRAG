@@ -4,7 +4,7 @@ import {
   Play, 
   Trash2, 
   CheckCircle, 
-  BarChart3, 
+  ChartColumn, 
   Target, 
   ShieldCheck, 
   RefreshCw,
@@ -148,7 +148,7 @@ const RagasView: React.FC = () => {
         }),
       });
       if (response.ok) {
-        alert('Avaliação em lote iniciada! Os resultados aparecerão em instantes.');
+        alert('AvaliaÃ§Ã£o em lote iniciada! Os resultados aparecerÃ£o em instantes.');
         // Periodically refresh results for a bit
         const interval = setInterval(fetchResults, 5000);
         setTimeout(() => clearInterval(interval), 60000);
@@ -179,7 +179,7 @@ const RagasView: React.FC = () => {
           <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tight">
             RAGAS Quality Insights
           </h1>
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Avaliação automatizada LLM-as-a-Judge</p>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">AvaliaÃ§Ã£o automatizada LLM-as-a-Judge</p>
         </div>
         <div className="flex gap-4">
           <select 
@@ -196,7 +196,7 @@ const RagasView: React.FC = () => {
             className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 disabled:bg-slate-100 disabled:text-slate-400 text-white px-6 py-2 rounded-lg font-black text-xs uppercase tracking-widest shadow-md active:scale-95 transition-all"
           >
             {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            Rodar Avaliação
+            Rodar AvaliaÃ§Ã£o
           </button>
         </div>
       </header>
@@ -205,8 +205,8 @@ const RagasView: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
           { label: 'Faithfulness', value: getAvgScore('faithfulnessScore'), icon: ShieldCheck, color: 'text-emerald-500', bg: 'bg-emerald-50', desc: 'Fidelidade ao contexto' },
-          { label: 'Relevancy', value: getAvgScore('answerRelevancyScore'), icon: Target, color: 'text-blue-500', bg: 'bg-blue-50', desc: 'Relevância da resposta' },
-          { label: 'Precision', value: getAvgScore('contextPrecisionScore'), icon: BarChart3, color: 'text-purple-500', bg: 'bg-purple-50', desc: 'Precisão do contexto' },
+          { label: 'Relevancy', value: getAvgScore('answerRelevancyScore'), icon: Target, color: 'text-blue-500', bg: 'bg-blue-50', desc: 'RelevÃ¢ncia da resposta' },
+          { label: 'Precision', value: getAvgScore('contextPrecisionScore'), icon: ChartColumn, color: 'text-purple-500', bg: 'bg-purple-50', desc: 'PrecisÃ£o do contexto' },
           { label: 'Recall', value: getAvgScore('contextRecallScore'), icon: Info, color: 'text-orange-500', bg: 'bg-orange-50', desc: 'Recall do ground truth' },
         ].map((m, idx) => (
           <div key={idx} className="bg-white border-2 border-slate-100 p-6 rounded-xl flex flex-col items-center justify-center text-center shadow-sm">
@@ -301,7 +301,7 @@ const RagasView: React.FC = () => {
 
         {/* Results Section - Right side (2/3) */}
         <section className="lg:col-span-2 space-y-4">
-          <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Histórico de Performance</h3>
+          <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">HistÃ³rico de Performance</h3>
           
           <div className="bg-white border-2 border-slate-100 rounded-xl overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
@@ -397,7 +397,7 @@ const RagasView: React.FC = () => {
                                     <ShieldCheck className="w-3 h-3" /> Provider: {res.provider}
                                   </span>
                                   <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter flex items-center gap-1.5">
-                                    <RefreshCw className="w-3 h-3" /> Latência: {res.evaluationTimeMillis}ms
+                                    <RefreshCw className="w-3 h-3" /> LatÃªncia: {res.evaluationTimeMillis}ms
                                   </span>
                                 </div>
                               </div>
